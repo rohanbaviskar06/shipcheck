@@ -2,7 +2,6 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
 import { runScan } from "@/lib/scan.functions";
-import { saveScan } from "@/lib/scan-store";
 
 export const Route = createFileRoute("/")({
   head: () => ({
