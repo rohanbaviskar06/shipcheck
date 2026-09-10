@@ -1,4 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
+import { createClient } from "@supabase/supabase-js";
+import type { Database } from "@/integrations/supabase/types";
 
 export type CheckStatus = "pass" | "warning" | "critical";
 
@@ -17,7 +19,25 @@ export type ScanResult = {
   score: number;
   checks: CheckResult[];
   scannedAt: string;
+  paid: boolean;
 };
+
+function serverSupabase() {
+  const key = process.env["SUPABASE_PUBLISHABLE_KEY"] ?? process.env["SUPABASE_ANON_KEY"]!;
+  return createClient<Database>(process.env["SUPABASE_URL"]!, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: {
+      fetch: (input, init) => {
+        const h = new Headers(init?.headers);
+        if (key.startsWith("sb_") && h.get("Authorization") === `Bearer ${key}`) {
+          h.delete("Authorization");
+        }
+        h.set("apikey", key);
+        return fetch(input, { ...init, headers: h });
+      },
+    },
+  });
+}
 
 const UA = "ShipCheckBot/1.0 (+pre-launch site checker)";
 
@@ -265,11 +285,50 @@ export const runScan = createServerFn({ method: "POST" })
     let score = Math.round((earned / totalWeight) * 100);
     if (checks.some((c) => c.status === "critical")) score = Math.min(score, 69);
 
+    const url = parsed.toString();
+    const supabase = serverSupabase();
+    const { data: row, error } = await supabase
+      .from("scans")
+      .insert({ url, score, checks })
+      .select("id, created_at, paid")
+      .single();
+
+    if (error || !row) {
+      throw new Error("We finished the scan but couldn't save the report. Please try again.");
+    }
+
     return {
-      id: crypto.randomUUID(),
-      url: parsed.toString(),
+      id: row.id,
+      url,
       score,
       checks,
-      scannedAt: new Date().toISOString(),
+      scannedAt: row.created_at,
+      paid: row.paid,
+    };
+  });
+
+export const getScan = createServerFn({ method: "GET" })
+  .inputValidator((data: { id: string }) => {
+    const id = typeof data?.id === "string" ? data.id.trim() : "";
+    if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error("Report not found.");
+    return { id };
+  })
+  .handler(async ({ data }): Promise<ScanResult | null> => {
+    const supabase = serverSupabase();
+    const { data: row, error } = await supabase
+      .from("scans")
+      .select("id, url, score, checks, paid, created_at")
+      .eq("id", data.id)
+      .maybeSingle();
+
+    if (error || !row) return null;
+
+    return {
+      id: row.id,
+      url: row.url,
+      score: row.score,
+      checks: (row.checks ?? []) as unknown as CheckResult[],
+      scannedAt: row.created_at,
+      paid: row.paid,
     };
   });

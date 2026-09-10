@@ -62,6 +62,33 @@ export type Database = {
         }
         Relationships: []
       }
+      scans: {
+        Row: {
+          checks: Json
+          created_at: string
+          id: string
+          paid: boolean
+          score: number
+          url: string
+        }
+        Insert: {
+          checks?: Json
+          created_at?: string
+          id?: string
+          paid?: boolean
+          score: number
+          url: string
+        }
+        Update: {
+          checks?: Json
+          created_at?: string
+          id?: string
+          paid?: boolean
+          score?: number
+          url?: string
+        }
+        Relationships: []
+      }
       watch_progress: {
         Row: {
           duration_sec: number
