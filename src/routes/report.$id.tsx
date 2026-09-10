@@ -236,7 +236,15 @@ function Report() {
 
         {scan.paid ? (
           <>
-            <h2 className="mt-12 text-lg font-semibold tracking-tight">Full report</h2>
+            <div data-paid className="mt-12 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold tracking-tight">Full report</h2>
+              <a
+                href={`/api/public/report/${scan.id}/pdf`}
+                className="h-10 rounded-lg bg-primary px-5 text-sm font-semibold leading-10 text-primary-foreground transition hover:opacity-90"
+              >
+                Download PDF
+              </a>
+            </div>
             <ul className="mt-4 space-y-3">
               {ranked.map((c) => (
                 <li key={c.id} className="rounded-lg border border-border bg-card p-5">
