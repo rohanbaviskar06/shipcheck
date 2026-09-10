@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ReportIdRouteImport } from './routes/report.$id'
+import { Route as ApiPublicWebhookRazorpayRouteImport } from './routes/api/public/webhook/razorpay'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -22,31 +23,41 @@ const ReportIdRoute = ReportIdRouteImport.update({
   path: '/report/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicWebhookRazorpayRoute =
+  ApiPublicWebhookRazorpayRouteImport.update({
+    id: '/api/public/webhook/razorpay',
+    path: '/api/public/webhook/razorpay',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/report/$id': typeof ReportIdRoute
+  '/api/public/webhook/razorpay': typeof ApiPublicWebhookRazorpayRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/report/$id': typeof ReportIdRoute
+  '/api/public/webhook/razorpay': typeof ApiPublicWebhookRazorpayRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/report/$id': typeof ReportIdRoute
+  '/api/public/webhook/razorpay': typeof ApiPublicWebhookRazorpayRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/report/$id'
+  fullPaths: '/' | '/report/$id' | '/api/public/webhook/razorpay'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/report/$id'
-  id: '__root__' | '/' | '/report/$id'
+  to: '/' | '/report/$id' | '/api/public/webhook/razorpay'
+  id: '__root__' | '/' | '/report/$id' | '/api/public/webhook/razorpay'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ReportIdRoute: typeof ReportIdRoute
+  ApiPublicWebhookRazorpayRoute: typeof ApiPublicWebhookRazorpayRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -65,12 +76,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReportIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/webhook/razorpay': {
+      id: '/api/public/webhook/razorpay'
+      path: '/api/public/webhook/razorpay'
+      fullPath: '/api/public/webhook/razorpay'
+      preLoaderRoute: typeof ApiPublicWebhookRazorpayRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ReportIdRoute: ReportIdRoute,
+  ApiPublicWebhookRazorpayRoute: ApiPublicWebhookRazorpayRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
