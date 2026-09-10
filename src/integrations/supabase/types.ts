@@ -64,26 +64,41 @@ export type Database = {
       }
       scans: {
         Row: {
+          amount: number | null
           checks: Json
           created_at: string
+          currency: string | null
+          email: string | null
           id: string
           paid: boolean
+          razorpay_order_id: string | null
+          razorpay_payment_id: string | null
           score: number
           url: string
         }
         Insert: {
+          amount?: number | null
           checks?: Json
           created_at?: string
+          currency?: string | null
+          email?: string | null
           id?: string
           paid?: boolean
+          razorpay_order_id?: string | null
+          razorpay_payment_id?: string | null
           score: number
           url: string
         }
         Update: {
+          amount?: number | null
           checks?: Json
           created_at?: string
+          currency?: string | null
+          email?: string | null
           id?: string
           paid?: boolean
+          razorpay_order_id?: string | null
+          razorpay_payment_id?: string | null
           score?: number
           url?: string
         }
