@@ -14,6 +14,27 @@ export type Database = {
   }
   public: {
     Tables: {
+      analytics_events: {
+        Row: {
+          created_at: string
+          id: string
+          meta: Json
+          name: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          meta?: Json
+          name: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          meta?: Json
+          name?: string
+        }
+        Relationships: []
+      }
       my_list: {
         Row: {
           created_at: string | null
@@ -70,6 +91,7 @@ export type Database = {
           currency: string | null
           email: string | null
           id: string
+          ip_hash: string | null
           paid: boolean
           razorpay_order_id: string | null
           razorpay_payment_id: string | null
@@ -83,6 +105,7 @@ export type Database = {
           currency?: string | null
           email?: string | null
           id?: string
+          ip_hash?: string | null
           paid?: boolean
           razorpay_order_id?: string | null
           razorpay_payment_id?: string | null
@@ -96,6 +119,7 @@ export type Database = {
           currency?: string | null
           email?: string | null
           id?: string
+          ip_hash?: string | null
           paid?: boolean
           razorpay_order_id?: string | null
           razorpay_payment_id?: string | null
