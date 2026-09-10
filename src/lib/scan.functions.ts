@@ -368,12 +368,53 @@ export const getScan = createServerFn({ method: "GET" })
 
     if (error || !row) return null;
 
+    const all = (row.checks ?? []) as unknown as CheckResult[];
+    // Locked reports never receive the full fix instructions over the wire.
+    const checks = row.paid
+      ? all
+      : all.map((c) => ({
+          ...c,
+          detail: c.detail.slice(0, 48),
+          fix: "",
+        }));
+
     return {
       id: row.id,
       url: row.url,
       score: row.score,
-      checks: (row.checks ?? []) as unknown as CheckResult[],
+      checks,
       scannedAt: row.created_at,
       paid: row.paid,
+      ogImage: `${siteOrigin()}/api/public/report/${row.id}/og-image`,
     };
   });
+
+/** Optional mailing-list capture attached to a report. */
+export const saveEmail = createServerFn({ method: "POST" })
+  .inputValidator((data: { id: string; email: string }) => {
+    const id = typeof data?.id === "string" ? data.id.trim() : "";
+    const email = typeof data?.email === "string" ? data.email.trim().toLowerCase() : "";
+    if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error("Report not found.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) || email.length > 200) {
+      throw new Error("That email doesn't look right.");
+    }
+    return { id, email };
+  })
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { error } = await supabaseAdmin
+      .from("scans")
+      .update({ email: data.email })
+      .eq("id", data.id);
+    if (error) throw new Error("We couldn't save that. Try again.");
+    const { logEvent } = await import("@/lib/analytics.server");
+    await logEvent("email_captured", { scanId: data.id });
+    return { ok: true as const };
+  });
+
+/** Public counter used as social proof on the homepage. */
+export const getScanCount = createServerFn({ method: "GET" }).handler(async () => {
+  const supabase = serverSupabase();
+  const { count } = await supabase.from("scans").select("id", { count: "exact", head: true });
+  return { total: count ?? 0 };
+});
