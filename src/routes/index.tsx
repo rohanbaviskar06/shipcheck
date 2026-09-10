@@ -1,36 +1,75 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
-import { runScan } from "@/lib/scan.functions";
+import { runScan, getScanCount } from "@/lib/scan.functions";
 
 export const Route = createFileRoute("/")({
+  loader: async () => {
+    try {
+      return await getScanCount();
+    } catch {
+      return { total: 0 };
+    }
+  },
   head: () => ({
     meta: [
-      { title: "ShipCheck — Find what breaks before you launch" },
+      { title: "ShipCheck — Fix your site before launch day" },
       {
         name: "description",
         content:
-          "Paste your URL and get an instant pre-launch score across 10 SEO, AI-visibility, technical and legal checks.",
+          "Launching on Product Hunt or IndieHackers? Paste your URL for an instant pre-launch score across 10 SEO, AI-visibility, technical and legal checks.",
       },
-      { property: "og:title", content: "ShipCheck — Find what breaks before you launch" },
+      { property: "og:title", content: "ShipCheck — Fix your site before launch day" },
       {
         property: "og:description",
         content:
-          "Paste your URL and get an instant pre-launch score across 10 SEO, AI-visibility, technical and legal checks.",
+          "Paste your URL and see what will hurt you on launch day: metadata, share previews, blocked crawlers, missing legal pages.",
       },
+      { property: "og:type", content: "website" },
+      { property: "og:url", content: "/" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
+    links: [{ rel: "canonical", href: "/" }],
   }),
   component: Index,
 });
 
 const steps = [
-  { n: "01", title: "Paste your URL", body: "Any public page. No signup, no install, no code snippet." },
-  { n: "02", title: "We run 10 checks", body: "SEO basics, social previews, AI-crawler access, robots, sitemap, HTTPS, legal pages." },
-  { n: "03", title: "Fix before launch", body: "See your score and the issues that cost you traffic and trust on day one." },
+  {
+    n: "01",
+    title: "Paste your URL",
+    body: "Any public page. No signup, no install, no script to add.",
+  },
+  {
+    n: "02",
+    title: "Ten checks, ten seconds",
+    body: "We fetch your page the way Google, X and ChatGPT do, and report what they actually see.",
+  },
+  {
+    n: "03",
+    title: "Fix it before you post",
+    body: "Every failure comes with the exact change to make. Ship the fix, then hit publish.",
+  },
+];
+
+const stakes = [
+  {
+    title: "Your launch post gets one shot",
+    body: "Product Hunt front page traffic arrives in a four-hour window and never comes back. A broken share card or a staging robots.txt turns that window into nothing.",
+  },
+  {
+    title: "The link is the product",
+    body: "On X, IndieHackers and outbids.lol, people see your link before your app. No preview image, no title, no click.",
+  },
+  {
+    title: "AI answers are the new front page",
+    body: "If GPTBot and ClaudeBot are blocked, you're absent from every 'best tool for…' answer for months.",
+  },
 ];
 
 function Index() {
   const navigate = useNavigate();
+  const { total } = Route.useLoaderData();
   const scan = useServerFn(runScan);
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
@@ -57,24 +96,33 @@ function Index() {
         <span className="font-mono text-sm font-bold tracking-tight">
           ship<span className="text-primary">check</span>
         </span>
-        <span className="font-mono text-xs text-muted-foreground">10 checks · instant</span>
+        <nav className="flex items-center gap-5 font-mono text-xs text-muted-foreground">
+          <Link to="/about" className="transition hover:text-foreground">
+            what we check
+          </Link>
+          <span>10 checks · instant</span>
+        </nav>
       </header>
 
-      <section className="mx-auto max-w-3xl px-6 pt-12 pb-24 text-center">
-        <p className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
+      <section className="mx-auto max-w-3xl px-6 pt-14 pb-24 text-center sm:pt-20">
+        <p className="animate-rise font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
           Pre-launch site checker
         </p>
-        <h1 className="mt-6 text-4xl font-semibold leading-[1.1] tracking-tight sm:text-6xl">
+        <h1 className="animate-rise mt-7 text-4xl font-semibold leading-[1.08] tracking-tight sm:text-6xl">
           Paste your URL.
           <br />
           <span className="text-primary">Find out what will hurt you</span> before you launch.
         </h1>
-        <p className="mx-auto mt-6 max-w-xl text-base leading-relaxed text-muted-foreground">
-          A ten-point sweep of the things that quietly sink new sites: missing metadata, broken social
-          previews, blocked crawlers, absent legal pages.
+        <p className="animate-rise mx-auto mt-7 max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
+          You've spent weeks on the product and ten minutes on the page it lives at. ShipCheck sweeps
+          the ten things that quietly sink launch day — missing metadata, dead share previews,
+          blocked AI crawlers, absent legal pages — before Product Hunt sees them.
         </p>
 
-        <form onSubmit={onSubmit} className="mx-auto mt-10 flex max-w-xl flex-col gap-3 sm:flex-row">
+        <form
+          onSubmit={onSubmit}
+          className="mx-auto mt-12 flex max-w-xl flex-col gap-3 sm:flex-row"
+        >
           <input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
@@ -88,13 +136,18 @@ function Index() {
             disabled={busy}
             className="h-13 rounded-lg bg-primary px-7 text-sm font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-60"
           >
-            {busy ? "Scanning…" : "Scan"}
+            {busy ? "Scanning…" : "Scan my site"}
           </button>
         </form>
         {error ? <p className="mt-4 font-mono text-xs text-destructive">{error}</p> : null}
-        <p className="mt-4 font-mono text-xs text-muted-foreground">
-          Free score + top 3 issues. Full report unlocks for $9.
+        <p className="mt-5 font-mono text-xs text-muted-foreground">
+          Free score + your top 3 issues. Full report $9 once — no account, no subscription.
         </p>
+        {total > 0 ? (
+          <p className="mt-2 font-mono text-xs text-muted-foreground">
+            {total.toLocaleString("en-US")} {total === 1 ? "site" : "sites"} checked so far
+          </p>
+        ) : null}
       </section>
 
       <section className="border-y border-border bg-card/60">
@@ -109,8 +162,22 @@ function Index() {
         </div>
       </section>
 
-      <section className="mx-auto max-w-4xl px-6 py-20">
-        <h2 className="text-center text-sm font-mono uppercase tracking-[0.2em] text-muted-foreground">
+      <section className="mx-auto max-w-5xl px-6 py-20">
+        <h2 className="text-center font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
+          Why it matters on day one
+        </h2>
+        <div className="mt-10 grid gap-8 sm:grid-cols-3">
+          {stakes.map((s) => (
+            <div key={s.title} className="rounded-xl border border-border bg-card p-6 shadow-card">
+              <h3 className="text-base font-semibold tracking-tight">{s.title}</h3>
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{s.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-4xl px-6 pb-24">
+        <h2 className="text-center font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
           What the report looks like
         </h2>
         <div className="mt-8 rounded-xl border border-border bg-card p-8 shadow-card">
@@ -133,10 +200,20 @@ function Index() {
             </li>
           </ul>
         </div>
+        <p className="mt-6 text-center text-sm text-muted-foreground">
+          Curious what each check means?{" "}
+          <Link to="/about" className="font-medium text-primary hover:underline">
+            See all ten and why they matter
+          </Link>
+          .
+        </p>
       </section>
 
       <footer className="border-t border-border px-6 py-10 text-center font-mono text-xs text-muted-foreground">
-        ShipCheck · check before you ship
+        ShipCheck · check before you ship ·{" "}
+        <Link to="/about" className="hover:text-foreground">
+          what we check
+        </Link>
       </footer>
     </main>
   );

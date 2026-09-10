@@ -1,6 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
+import { getRequestHeader, getRequestHost, getRequestProtocol } from "@tanstack/react-start/server";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
+
+const SCANS_PER_HOUR = 5;
 
 export type CheckStatus = "pass" | "warning" | "critical";
 
@@ -20,7 +23,30 @@ export type ScanResult = {
   checks: CheckResult[];
   scannedAt: string;
   paid: boolean;
+  /** Absolute URL of this report's share image, for og:image / twitter:image. */
+  ogImage: string;
 };
+
+function siteOrigin(): string {
+  try {
+    return `${getRequestProtocol()}://${getRequestHost({ xForwardedHost: true })}`;
+  } catch {
+    return "";
+  }
+}
+
+function requestIp(): string {
+  try {
+    const forwarded = getRequestHeader("x-forwarded-for") ?? "";
+    return (
+      getRequestHeader("cf-connecting-ip") ??
+      forwarded.split(",")[0]?.trim() ??
+      "unknown"
+    );
+  } catch {
+    return "unknown";
+  }
+}
 
 function serverSupabase() {
   const key = process.env["SUPABASE_PUBLISHABLE_KEY"] ?? process.env["SUPABASE_ANON_KEY"]!;
@@ -131,6 +157,23 @@ export const runScan = createServerFn({ method: "POST" })
       parsed = new URL(input);
     } catch {
       throw new Error("That doesn't look like a valid website address.");
+    }
+
+    const { hashIp, logEvent } = await import("@/lib/analytics.server");
+    const ipHash = await hashIp(requestIp());
+    const supabase = serverSupabase();
+    const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { count: recent } = await supabase
+      .from("scans")
+      .select("id", { count: "exact", head: true })
+      .eq("ip_hash", ipHash)
+      .gte("created_at", since);
+
+    if ((recent ?? 0) >= SCANS_PER_HOUR) {
+      await logEvent("scan_rate_limited", { ipHash });
+      throw new Error(
+        `You've run ${SCANS_PER_HOUR} scans in the past hour — the limit resets shortly. Try again later.`,
+      );
     }
 
     const page = await safeFetch(parsed.toString());
@@ -286,10 +329,9 @@ export const runScan = createServerFn({ method: "POST" })
     if (checks.some((c) => c.status === "critical")) score = Math.min(score, 69);
 
     const url = parsed.toString();
-    const supabase = serverSupabase();
     const { data: row, error } = await supabase
       .from("scans")
-      .insert({ url, score, checks })
+      .insert({ url, score, checks, ip_hash: ipHash })
       .select("id, created_at, paid")
       .single();
 
@@ -297,13 +339,17 @@ export const runScan = createServerFn({ method: "POST" })
       throw new Error("We finished the scan but couldn't save the report. Please try again.");
     }
 
+    await logEvent("scan_completed", { scanId: row.id, host: parsed.host, score });
+
     return {
       id: row.id,
       url,
       score,
-      checks,
+      // Locked report: no fix instructions leave the server.
+      checks: checks.map((c) => ({ ...c, detail: c.detail.slice(0, 48), fix: "" })),
       scannedAt: row.created_at,
       paid: row.paid,
+      ogImage: `${siteOrigin()}/api/public/report/${row.id}/og-image`,
     };
   });
 
@@ -323,12 +369,53 @@ export const getScan = createServerFn({ method: "GET" })
 
     if (error || !row) return null;
 
+    const all = (row.checks ?? []) as unknown as CheckResult[];
+    // Locked reports never receive the full fix instructions over the wire.
+    const checks = row.paid
+      ? all
+      : all.map((c) => ({
+          ...c,
+          detail: c.detail.slice(0, 48),
+          fix: "",
+        }));
+
     return {
       id: row.id,
       url: row.url,
       score: row.score,
-      checks: (row.checks ?? []) as unknown as CheckResult[],
+      checks,
       scannedAt: row.created_at,
       paid: row.paid,
+      ogImage: `${siteOrigin()}/api/public/report/${row.id}/og-image`,
     };
   });
+
+/** Optional mailing-list capture attached to a report. */
+export const saveEmail = createServerFn({ method: "POST" })
+  .inputValidator((data: { id: string; email: string }) => {
+    const id = typeof data?.id === "string" ? data.id.trim() : "";
+    const email = typeof data?.email === "string" ? data.email.trim().toLowerCase() : "";
+    if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error("Report not found.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) || email.length > 200) {
+      throw new Error("That email doesn't look right.");
+    }
+    return { id, email };
+  })
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { error } = await supabaseAdmin
+      .from("scans")
+      .update({ email: data.email })
+      .eq("id", data.id);
+    if (error) throw new Error("We couldn't save that. Try again.");
+    const { logEvent } = await import("@/lib/analytics.server");
+    await logEvent("email_captured", { scanId: data.id });
+    return { ok: true as const };
+  });
+
+/** Public counter used as social proof on the homepage. */
+export const getScanCount = createServerFn({ method: "GET" }).handler(async () => {
+  const supabase = serverSupabase();
+  const { count } = await supabase.from("scans").select("id", { count: "exact", head: true });
+  return { total: count ?? 0 };
+});
