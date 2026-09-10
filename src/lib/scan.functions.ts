@@ -345,7 +345,8 @@ export const runScan = createServerFn({ method: "POST" })
       id: row.id,
       url,
       score,
-      checks,
+      // Locked report: no fix instructions leave the server.
+      checks: checks.map((c) => ({ ...c, detail: c.detail.slice(0, 48), fix: "" })),
       scannedAt: row.created_at,
       paid: row.paid,
       ogImage: `${siteOrigin()}/api/public/report/${row.id}/og-image`,
