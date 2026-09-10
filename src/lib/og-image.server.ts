@@ -219,8 +219,9 @@ export async function renderScoreCard(input: OgInput): Promise<Uint8Array> {
   const tally = `${input.criticals} critical  ·  ${input.warnings} warnings  ·  ${input.passes} passed`;
   bmp.text(72, 522, tally, 4, MUTED);
 
+  // Top-right CTA: keeps clear of the tally line at the bottom.
   const cta = "scan yours free";
-  bmp.text(1128 - textWidth(cta, 4), 522, cta, 4, BRAND);
+  bmp.text(1128 - textWidth(cta, 4), 104, cta, 4, BRAND);
 
   return encodePng(bmp);
 }
