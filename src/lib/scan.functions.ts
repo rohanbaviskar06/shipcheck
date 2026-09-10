@@ -1,6 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
+import { getRequestHeader, getRequestHost, getRequestProtocol } from "@tanstack/react-start/server";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
+
+const SCANS_PER_HOUR = 5;
 
 export type CheckStatus = "pass" | "warning" | "critical";
 
