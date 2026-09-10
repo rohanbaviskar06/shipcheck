@@ -329,16 +329,17 @@ export const runScan = createServerFn({ method: "POST" })
     if (checks.some((c) => c.status === "critical")) score = Math.min(score, 69);
 
     const url = parsed.toString();
-    const supabase = serverSupabase();
     const { data: row, error } = await supabase
       .from("scans")
-      .insert({ url, score, checks })
+      .insert({ url, score, checks, ip_hash: ipHash })
       .select("id, created_at, paid")
       .single();
 
     if (error || !row) {
       throw new Error("We finished the scan but couldn't save the report. Please try again.");
     }
+
+    await logEvent("scan_completed", { scanId: row.id, host: parsed.host, score });
 
     return {
       id: row.id,
@@ -347,6 +348,7 @@ export const runScan = createServerFn({ method: "POST" })
       checks,
       scannedAt: row.created_at,
       paid: row.paid,
+      ogImage: `${siteOrigin()}/api/public/report/${row.id}/og-image`,
     };
   });
 
