@@ -23,7 +23,30 @@ export type ScanResult = {
   checks: CheckResult[];
   scannedAt: string;
   paid: boolean;
+  /** Absolute URL of this report's share image, for og:image / twitter:image. */
+  ogImage: string;
 };
+
+function siteOrigin(): string {
+  try {
+    return `${getRequestProtocol()}://${getRequestHost({ xForwardedHost: true })}`;
+  } catch {
+    return "";
+  }
+}
+
+function requestIp(): string {
+  try {
+    const forwarded = getRequestHeader("x-forwarded-for") ?? "";
+    return (
+      getRequestHeader("cf-connecting-ip") ??
+      forwarded.split(",")[0]?.trim() ??
+      "unknown"
+    );
+  } catch {
+    return "unknown";
+  }
+}
 
 function serverSupabase() {
   const key = process.env["SUPABASE_PUBLISHABLE_KEY"] ?? process.env["SUPABASE_ANON_KEY"]!;
