@@ -285,11 +285,24 @@ export const runScan = createServerFn({ method: "POST" })
     let score = Math.round((earned / totalWeight) * 100);
     if (checks.some((c) => c.status === "critical")) score = Math.min(score, 69);
 
+    const url = parsed.toString();
+    const supabase = serverSupabase();
+    const { data: row, error } = await supabase
+      .from("scans")
+      .insert({ url, score, checks })
+      .select("id, created_at, paid")
+      .single();
+
+    if (error || !row) {
+      throw new Error("We finished the scan but couldn't save the report. Please try again.");
+    }
+
     return {
-      id: crypto.randomUUID(),
-      url: parsed.toString(),
+      id: row.id,
+      url,
       score,
       checks,
-      scannedAt: new Date().toISOString(),
+      scannedAt: row.created_at,
+      paid: row.paid,
     };
   });
