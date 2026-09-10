@@ -1,7 +1,120 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
 import { getScan } from "@/lib/scan.functions";
 import type { CheckStatus } from "@/lib/scan.functions";
+import { createOrder, verifyPayment, PRICES, type Currency } from "@/lib/payment.functions";
+
+declare global {
+  interface Window {
+    Razorpay?: new (options: Record<string, unknown>) => { open: () => void };
+  }
+}
+
+function loadRazorpay(): Promise<boolean> {
+  if (typeof window === "undefined") return Promise.resolve(false);
+  if (window.Razorpay) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const s = document.createElement("script");
+    s.src = "https://checkout.razorpay.com/v1/checkout.js";
+    s.onload = () => resolve(true);
+    s.onerror = () => resolve(false);
+    document.body.appendChild(s);
+  });
+}
+
+function Unlock({ scanId, locked }: { scanId: string; locked: number }) {
+  const router = useRouter();
+  const order = useServerFn(createOrder);
+  const verify = useServerFn(verifyPayment);
+  const [currency, setCurrency] = useState<Currency>("INR");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function pay() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const created = await order({ data: { id: scanId, currency } });
+      if (created.alreadyPaid) {
+        await router.invalidate();
+        return;
+      }
+      const ready = await loadRazorpay();
+      if (!ready || !window.Razorpay) throw new Error("Payment window couldn't load. Try again.");
+
+      const rzp = new window.Razorpay({
+        key: created.keyId,
+        order_id: created.orderId,
+        amount: created.amount,
+        currency: created.currency,
+        name: "ShipCheck",
+        description: "Full pre-launch report",
+        handler: async (res: {
+          razorpay_order_id: string;
+          razorpay_payment_id: string;
+          razorpay_signature: string;
+        }) => {
+          try {
+            await verify({
+              data: {
+                id: scanId,
+                orderId: res.razorpay_order_id,
+                paymentId: res.razorpay_payment_id,
+                signature: res.razorpay_signature,
+              },
+            });
+          } catch {
+            /* webhook will unlock it shortly */
+          }
+          for (let i = 0; i < 6; i++) {
+            await router.invalidate();
+            await new Promise((r) => setTimeout(r, 1500));
+            if (document.querySelector("[data-paid]")) break;
+          }
+        },
+        modal: { ondismiss: () => setBusy(false) },
+        theme: { color: "#e2562b" },
+      });
+      rzp.open();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-card/70 text-center">
+      <p className="text-sm font-semibold">{locked} more issues — unlock full report</p>
+      <p className="max-w-sm px-6 text-sm text-muted-foreground">
+        Full detail, exact fix instructions for every failure, a PDF and a shareable link.
+      </p>
+      <div className="flex rounded-lg border border-border bg-card p-1 font-mono text-xs">
+        {(["INR", "USD"] as Currency[]).map((c) => (
+          <button
+            key={c}
+            onClick={() => setCurrency(c)}
+            className={`rounded px-3 py-1 transition ${
+              currency === c ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+            }`}
+          >
+            {PRICES[c].label}
+          </button>
+        ))}
+      </div>
+      <button
+        onClick={pay}
+        disabled={busy}
+        className="h-11 rounded-lg bg-primary px-6 text-sm font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-60"
+      >
+        {busy ? "Opening checkout…" : `Unlock full report — ${PRICES[currency].label}`}
+      </button>
+      {error ? <p className="font-mono text-xs text-destructive">{error}</p> : null}
+    </div>
+  );
+}
 
 export const Route = createFileRoute("/report/$id")({
   loader: async ({ params }) => {
