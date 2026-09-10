@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AboutRouteImport } from './routes/about'
 import { Route as ReportIdRouteImport } from './routes/report.$id'
 import { Route as ApiPublicWebhookRazorpayRouteImport } from './routes/api/public/webhook/razorpay'
 import { Route as ApiPublicReportIdOgImageRouteImport } from './routes/api/public/report/$id/og-image'
@@ -18,6 +19,11 @@ import { Route as ApiPublicReportIdPdfRouteImport } from './routes/api/public/re
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AboutRoute = AboutRouteImport.update({
+  id: '/about',
+  path: '/about',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ReportIdRoute = ReportIdRouteImport.update({
@@ -45,6 +51,7 @@ const ApiPublicReportIdPdfRoute = ApiPublicReportIdPdfRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/about': typeof AboutRoute
   '/report/$id': typeof ReportIdRoute
   '/api/public/webhook/razorpay': typeof ApiPublicWebhookRazorpayRoute
   '/api/public/report/$id/og-image': typeof ApiPublicReportIdOgImageRoute
@@ -52,6 +59,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/about': typeof AboutRoute
   '/report/$id': typeof ReportIdRoute
   '/api/public/webhook/razorpay': typeof ApiPublicWebhookRazorpayRoute
   '/api/public/report/$id/og-image': typeof ApiPublicReportIdOgImageRoute
@@ -60,6 +68,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/about': typeof AboutRoute
   '/report/$id': typeof ReportIdRoute
   '/api/public/webhook/razorpay': typeof ApiPublicWebhookRazorpayRoute
   '/api/public/report/$id/og-image': typeof ApiPublicReportIdOgImageRoute
@@ -69,6 +78,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/about'
     | '/report/$id'
     | '/api/public/webhook/razorpay'
     | '/api/public/report/$id/og-image'
@@ -76,6 +86,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/about'
     | '/report/$id'
     | '/api/public/webhook/razorpay'
     | '/api/public/report/$id/og-image'
@@ -83,6 +94,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/about'
     | '/report/$id'
     | '/api/public/webhook/razorpay'
     | '/api/public/report/$id/og-image'
@@ -91,6 +103,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AboutRoute: typeof AboutRoute
   ReportIdRoute: typeof ReportIdRoute
   ApiPublicWebhookRazorpayRoute: typeof ApiPublicWebhookRazorpayRoute
   ApiPublicReportIdOgImageRoute: typeof ApiPublicReportIdOgImageRoute
@@ -104,6 +117,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/about': {
+      id: '/about'
+      path: '/about'
+      fullPath: '/about'
+      preLoaderRoute: typeof AboutRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/report/$id': {
@@ -139,6 +159,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AboutRoute: AboutRoute,
   ReportIdRoute: ReportIdRoute,
   ApiPublicWebhookRazorpayRoute: ApiPublicWebhookRazorpayRoute,
   ApiPublicReportIdOgImageRoute: ApiPublicReportIdOgImageRoute,
