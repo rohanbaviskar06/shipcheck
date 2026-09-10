@@ -43,7 +43,6 @@ function Index() {
     setError(null);
     try {
       const result = await scan({ data: { url } });
-      saveScan(result);
       navigate({ to: "/report/$id", params: { id: result.id } });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong. Try again.");
