@@ -159,6 +159,23 @@ export const runScan = createServerFn({ method: "POST" })
       throw new Error("That doesn't look like a valid website address.");
     }
 
+    const { hashIp, logEvent } = await import("@/lib/analytics.server");
+    const ipHash = await hashIp(requestIp());
+    const supabase = serverSupabase();
+    const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { count: recent } = await supabase
+      .from("scans")
+      .select("id", { count: "exact", head: true })
+      .eq("ip_hash", ipHash)
+      .gte("created_at", since);
+
+    if ((recent ?? 0) >= SCANS_PER_HOUR) {
+      await logEvent("scan_rate_limited", { ipHash });
+      throw new Error(
+        `You've run ${SCANS_PER_HOUR} scans in the past hour — the limit resets shortly. Try again later.`,
+      );
+    }
+
     const page = await safeFetch(parsed.toString());
     if (!page.ok || !page.text) {
       throw new Error("We couldn't load that page. Check the address and try again.");
