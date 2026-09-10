@@ -296,19 +296,7 @@ function Report() {
                   </div>
                 ))}
               </div>
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-card/70 text-center">
-                <p className="text-sm font-semibold">{locked} more issues — unlock full report</p>
-                <p className="max-w-sm px-6 text-sm text-muted-foreground">
-                  Full detail, exact fix instructions for every failure, a PDF and a shareable link.
-                </p>
-                <button
-                  disabled
-                  className="h-11 cursor-not-allowed rounded-lg bg-primary px-6 text-sm font-semibold text-primary-foreground opacity-60"
-                >
-                  Unlock full report — $9
-                </button>
-                <span className="font-mono text-xs text-muted-foreground">payments coming soon</span>
-              </div>
+              <Unlock scanId={scan.id} locked={locked} />
             </div>
           </>
         )}
