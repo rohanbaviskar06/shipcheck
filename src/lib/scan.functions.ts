@@ -306,3 +306,29 @@ export const runScan = createServerFn({ method: "POST" })
       paid: row.paid,
     };
   });
+
+export const getScan = createServerFn({ method: "GET" })
+  .inputValidator((data: { id: string }) => {
+    const id = typeof data?.id === "string" ? data.id.trim() : "";
+    if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error("Report not found.");
+    return { id };
+  })
+  .handler(async ({ data }): Promise<ScanResult | null> => {
+    const supabase = serverSupabase();
+    const { data: row, error } = await supabase
+      .from("scans")
+      .select("id, url, score, checks, paid, created_at")
+      .eq("id", data.id)
+      .maybeSingle();
+
+    if (error || !row) return null;
+
+    return {
+      id: row.id,
+      url: row.url,
+      score: row.score,
+      checks: (row.checks ?? []) as unknown as CheckResult[],
+      scannedAt: row.created_at,
+      paid: row.paid,
+    };
+  });
