@@ -4,6 +4,10 @@ import { useState } from "react";
 import { getScan, saveEmail } from "@/lib/scan.functions";
 import type { CheckStatus } from "@/lib/scan.functions";
 import { createOrder, verifyPayment, PRICES, type Currency } from "@/lib/payment.functions";
+import { Footer } from "@/components/Footer";
+import { ShareCardPreviewSimulator } from "@/components/ShareCardPreviewSimulator";
+import { Download } from "lucide-react";
+import { generateReportPdf, downloadPdfBlob } from "@/lib/pdf";
 
 declare global {
   interface Window {
@@ -179,8 +183,8 @@ const dot: Record<CheckStatus, string> = {
 
 function Missing() {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background px-6 text-center">
-      <div>
+    <main className="flex min-h-screen flex-col justify-between bg-background text-center">
+      <div className="my-auto px-6 py-20">
         <h1 className="text-2xl font-semibold tracking-tight">We couldn't find that report</h1>
         <p className="mt-3 text-sm text-muted-foreground">
           The link may be mistyped. Run a new scan to get a fresh report.
@@ -192,6 +196,7 @@ function Missing() {
           New scan
         </Link>
       </div>
+      <Footer />
     </main>
   );
 }
@@ -295,6 +300,7 @@ function EmailCapture({ scanId }: { scanId: string }) {
 
 function Report() {
   const { scan } = Route.useLoaderData();
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   if (!scan) return <Missing />;
 
@@ -316,158 +322,246 @@ function Report() {
     /* keep raw */
   }
 
+  const ogCheck = scan.checks.find((c) => c.id === "og");
+  const titleCheck = scan.checks.find((c) => c.id === "title");
+  const descCheck = scan.checks.find((c) => c.id === "description");
+  const previewTitle =
+    ogCheck?.preview?.title ||
+    titleCheck?.detail?.match(/"([^"]+)"/)?.[1] ||
+    host;
+  const previewDesc =
+    ogCheck?.preview?.description ||
+    (descCheck?.detail && !descCheck.detail.startsWith("No meta") ? descCheck.detail : undefined);
+  const previewImage = ogCheck?.preview?.image;
+
   return (
-    <main className="min-h-screen bg-background text-foreground">
-      <header className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 px-6 py-8">
-        <Link to="/" className="font-mono text-sm font-bold tracking-tight">
-          ship<span className="text-primary">check</span>
-        </Link>
-        <div className="flex items-center gap-2">
-          <ShareOnX score={scan.score} host={host} />
-          <CopyLink />
-          <Link to="/" className="ml-1 font-mono text-xs text-muted-foreground hover:text-foreground">
-            new scan
+    <main className="flex min-h-screen flex-col justify-between bg-background text-foreground">
+      <div>
+        <header className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 px-6 py-8">
+          <Link to="/" className="font-mono text-sm font-bold tracking-tight">
+            ship<span className="text-primary">check</span>
           </Link>
-        </div>
-      </header>
-
-      <section className="mx-auto max-w-3xl px-6 pb-24">
-        {/* Score card — designed to look right as a screenshot */}
-        <div className="animate-rise overflow-hidden rounded-2xl border border-border bg-card shadow-card">
-          <div className="flex items-center justify-between border-b border-border px-8 py-4">
-            <p className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
-              Pre-launch report
-            </p>
-            <p className="font-mono text-xs text-muted-foreground">
-              {new Date(scan.scannedAt).toLocaleDateString("en-US", {
-                month: "short",
-                day: "numeric",
-                year: "numeric",
-              })}
-            </p>
+          <div className="flex items-center gap-2">
+            <ShareOnX score={scan.score} host={host} />
+            <CopyLink />
+            <Link to="/" className="ml-1 font-mono text-xs text-muted-foreground hover:text-foreground">
+              new scan
+            </Link>
           </div>
+        </header>
 
-          <div className="px-8 pt-8 pb-9">
-            <p className="break-all font-mono text-sm text-muted-foreground">{host}</p>
-            <div className="mt-5 flex flex-wrap items-end gap-x-6 gap-y-2">
-              <span
-                className={`animate-score font-mono text-8xl font-bold leading-none tracking-tighter ${scoreColor(scan.score)}`}
-              >
-                {scan.score}
-              </span>
-              <span className="pb-3 font-mono text-sm text-muted-foreground">/ 100</span>
-              <span className="pb-3 text-xl font-semibold tracking-tight sm:ml-auto">
-                {verdict(scan.score)}
-              </span>
+        <section className="mx-auto max-w-3xl px-6 pb-24">
+          {/* Score card — designed to look right as a screenshot */}
+          <div className="animate-rise overflow-hidden rounded-2xl border border-border bg-card shadow-card">
+            <div className="flex items-center justify-between border-b border-border px-8 py-4">
+              <p className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                Pre-launch report
+              </p>
+              <p className="font-mono text-xs text-muted-foreground">
+                {new Date(scan.scannedAt).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })}
+              </p>
             </div>
 
-            <div className="mt-7 h-2 overflow-hidden rounded-full bg-muted">
+            <div className="px-8 pt-8 pb-9">
+              <p className="break-all font-mono text-sm text-muted-foreground">{host}</p>
+              <div className="mt-5 flex flex-wrap items-end gap-x-6 gap-y-2">
+                <span
+                  className={`animate-score font-mono text-8xl font-bold leading-none tracking-tighter ${scoreColor(scan.score)}`}
+                >
+                  {scan.score}
+                </span>
+                <span className="pb-3 font-mono text-sm text-muted-foreground">/ 100</span>
+                <span className="pb-3 text-xl font-semibold tracking-tight sm:ml-auto">
+                  {verdict(scan.score)}
+                </span>
+              </div>
+
+              <div className="mt-7 h-2 overflow-hidden rounded-full bg-muted">
+                <div
+                  className={`animate-meter h-full w-full rounded-full ${meterColor(scan.score)}`}
+                  style={{ "--meter": scan.score / 100 } as React.CSSProperties}
+                />
+              </div>
+
+              <div className="mt-6 flex flex-wrap gap-2 font-mono text-xs">
+                <span className="rounded-full bg-destructive/10 px-3 py-1 text-destructive">
+                  {criticals} critical
+                </span>
+                <span className="rounded-full bg-warn/15 px-3 py-1 text-warn">
+                  {warnings} warnings
+                </span>
+                <span className="rounded-full bg-pass/10 px-3 py-1 text-pass">{passes} passed</span>
+              </div>
+            </div>
+          </div>
+
+          {scan.paid ? (
+            <>
               <div
-                className={`animate-meter h-full w-full rounded-full ${meterColor(scan.score)}`}
-                style={{ "--meter": scan.score / 100 } as React.CSSProperties}
-              />
-            </div>
-
-            <div className="mt-6 flex flex-wrap gap-2 font-mono text-xs">
-              <span className="rounded-full bg-destructive/10 px-3 py-1 text-destructive">
-                {criticals} critical
-              </span>
-              <span className="rounded-full bg-warn/15 px-3 py-1 text-warn">
-                {warnings} warnings
-              </span>
-              <span className="rounded-full bg-pass/10 px-3 py-1 text-pass">{passes} passed</span>
-            </div>
-          </div>
-        </div>
-
-        {scan.paid ? (
-          <>
-            <div
-              data-paid
-              className="animate-rise mt-14 flex flex-wrap items-center justify-between gap-3"
-            >
-              <h2 className="text-lg font-semibold tracking-tight">Full report</h2>
-              <a
-                href={`/api/public/report/${scan.id}/pdf`}
-                className="h-10 rounded-lg bg-primary px-5 text-sm font-semibold leading-10 text-primary-foreground transition hover:opacity-90"
+                data-paid
+                className="animate-rise mt-14 flex flex-wrap items-center justify-between gap-3"
               >
-                Download PDF
-              </a>
-            </div>
-            <ul className="mt-5 space-y-3">
-              {ranked.map((c) => (
-                <li key={c.id} className="rounded-xl border border-border bg-card p-5 shadow-card">
+                <div>
+                  <h2 className="text-lg font-semibold tracking-tight">Full report</h2>
+                  <p className="font-mono text-xs text-muted-foreground">
+                    All 10 checks with failure details and exact fix instructions
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (downloadingPdf) return;
+                    setDownloadingPdf(true);
+                    try {
+                      const bytes = await generateReportPdf({
+                        url: scan.url,
+                        score: scan.score,
+                        scannedAt: scan.scannedAt,
+                        checks: scan.checks,
+                      });
+                      downloadPdfBlob(bytes, `shipcheck-${host || scan.id.slice(0, 8)}.pdf`);
+                    } catch (err) {
+                      console.error("PDF generation failed", err);
+                      alert("PDF generation failed. Please try again.");
+                    } finally {
+                      setDownloadingPdf(false);
+                    }
+                  }}
+                  disabled={downloadingPdf}
+                  className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-5 text-sm font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-60"
+                >
+                  <Download className="h-4 w-4" />
+                  <span>{downloadingPdf ? "Creating PDF…" : "Download PDF"}</span>
+                </button>
+              </div>
+              <ul className="mt-5 space-y-3">
+                {ranked.map((c) => (
+                  <li key={c.id} className="rounded-xl border border-border bg-card p-5 shadow-card">
+                    <div className="flex items-center gap-3">
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${dot[c.status]}`} />
+                      <span className="text-sm font-semibold">{c.name}</span>
+                      <span className="ml-auto font-mono text-xs uppercase text-muted-foreground">
+                        {c.status}
+                      </span>
+                    </div>
+                    <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{c.detail}</p>
+
+                    {/* Check #3: Social sharing preview simulator */}
+                    {c.id === "og" && (
+                      <ShareCardPreviewSimulator
+                        title={c.preview?.title || previewTitle}
+                        description={c.preview?.description || previewDesc}
+                        image={c.preview?.image || previewImage}
+                        host={host}
+                      />
+                    )}
+
+                    {c.fix ? (
+                      <p className="mt-4 border-l-2 border-primary pl-4 text-sm leading-relaxed">
+                        <span className="font-mono text-xs uppercase tracking-wider text-primary">
+                          fix
+                        </span>
+                        <br />
+                        {c.fix}
+                      </p>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <>
+              <h2 className="mt-14 text-lg font-semibold tracking-tight">
+                {top.length > 0 ? "Your top issues" : "Nothing critical found"}
+              </h2>
+              <ul className="mt-5 space-y-3">
+                {top.map((c) => (
+                  <li
+                    key={c.id}
+                    className="rounded-xl border border-border bg-card p-5 text-sm shadow-card"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${dot[c.status]}`} />
+                      <span className="font-medium">{c.name}</span>
+                      <span className="ml-auto font-mono text-xs uppercase text-muted-foreground">
+                        {c.status}
+                      </span>
+                    </div>
+                    {c.id === "og" ? (
+                      <>
+                        <p className="mt-2 text-sm text-muted-foreground">{c.detail}</p>
+                        <ShareCardPreviewSimulator
+                          title={c.preview?.title || previewTitle}
+                          description={c.preview?.description || previewDesc}
+                          image={c.preview?.image || previewImage}
+                          host={host}
+                        />
+                      </>
+                    ) : null}
+                  </li>
+                ))}
+                {top.length === 0 ? (
+                  <li className="rounded-xl border border-border bg-card px-5 py-4 text-sm text-muted-foreground">
+                    Every check passed on this page.
+                  </li>
+                ) : null}
+              </ul>
+
+              {/* If ogCheck wasn't in top 3 (e.g. it passed or was #4), still show the simulator in Free mode */}
+              {!top.some((c) => c.id === "og") && ogCheck && (
+                <div className="mt-5 rounded-xl border border-border bg-card p-5 shadow-card">
                   <div className="flex items-center gap-3">
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${dot[c.status]}`} />
-                    <span className="text-sm font-semibold">{c.name}</span>
+                    <span className={`h-2 w-2 shrink-0 rounded-full ${dot[ogCheck.status]}`} />
+                    <span className="font-semibold text-sm">{ogCheck.name}</span>
                     <span className="ml-auto font-mono text-xs uppercase text-muted-foreground">
-                      {c.status}
+                      {ogCheck.status}
                     </span>
                   </div>
-                  <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{c.detail}</p>
-                  {c.fix ? (
-                    <p className="mt-4 border-l-2 border-primary pl-4 text-sm leading-relaxed">
-                      <span className="font-mono text-xs uppercase tracking-wider text-primary">
-                        fix
-                      </span>
-                      <br />
-                      {c.fix}
-                    </p>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          </>
-        ) : (
-          <>
-            <h2 className="mt-14 text-lg font-semibold tracking-tight">
-              {top.length > 0 ? "Your top issues" : "Nothing critical found"}
-            </h2>
-            <ul className="mt-5 space-y-2">
-              {top.map((c) => (
-                <li
-                  key={c.id}
-                  className="flex items-center gap-3 rounded-xl border border-border bg-card px-5 py-4 text-sm shadow-card"
-                >
-                  <span className={`h-2 w-2 shrink-0 rounded-full ${dot[c.status]}`} />
-                  <span className="font-medium">{c.name}</span>
-                  <span className="ml-auto font-mono text-xs uppercase text-muted-foreground">
-                    {c.status}
-                  </span>
-                </li>
-              ))}
-              {top.length === 0 ? (
-                <li className="rounded-xl border border-border bg-card px-5 py-4 text-sm text-muted-foreground">
-                  Every check passed on this page.
-                </li>
-              ) : null}
-            </ul>
+                  <p className="mt-2 text-sm text-muted-foreground">{ogCheck.detail}</p>
+                  <ShareCardPreviewSimulator
+                    title={ogCheck.preview?.title || previewTitle}
+                    description={ogCheck.preview?.description || previewDesc}
+                    image={ogCheck.preview?.image || previewImage}
+                    host={host}
+                  />
+                </div>
+              )}
 
-            <div className="relative mt-10 overflow-hidden rounded-2xl border border-border bg-card">
-              <div className="space-y-3 p-6 blur-[5px]" aria-hidden="true">
-                {ranked.slice(top.length).map((c) => (
-                  <div key={c.id} className="flex items-center gap-3 text-sm">
-                    <span className={`h-2 w-2 rounded-full ${dot[c.status]}`} />
-                    <span className="font-medium">{c.name}</span>
-                    <span className="text-muted-foreground">— {c.detail}…</span>
-                  </div>
-                ))}
+              <div className="relative mt-10 overflow-hidden rounded-2xl border border-border bg-card">
+                <div className="space-y-3 p-6 blur-[5px]" aria-hidden="true">
+                  {ranked
+                    .slice(top.length)
+                    .filter((c) => c.id !== "og")
+                    .map((c) => (
+                      <div key={c.id} className="flex items-center gap-3 text-sm">
+                        <span className={`h-2 w-2 rounded-full ${dot[c.status]}`} />
+                        <span className="font-medium">{c.name}</span>
+                        <span className="text-muted-foreground">— {c.detail}…</span>
+                      </div>
+                    ))}
+                </div>
+                <Unlock scanId={scan.id} locked={locked} />
               </div>
-              <Unlock scanId={scan.id} locked={locked} />
-            </div>
 
-            <EmailCapture scanId={scan.id} />
-          </>
-        )}
+              <EmailCapture scanId={scan.id} />
+            </>
+          )}
 
-        <p className="mt-10 text-center text-sm text-muted-foreground">
-          Not sure what a check means?{" "}
-          <Link to="/about" className="font-medium text-primary hover:underline">
-            See all ten and why they matter
-          </Link>
-          .
-        </p>
-      </section>
+          <p className="mt-10 text-center text-sm text-muted-foreground">
+            Not sure what a check means?{" "}
+            <Link to="/about" className="font-medium text-primary hover:underline">
+              See all ten and why they matter
+            </Link>
+            .
+          </p>
+        </section>
+      </div>
+
+      <Footer />
     </main>
   );
 }

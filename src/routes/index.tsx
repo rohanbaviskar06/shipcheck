@@ -2,6 +2,13 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
 import { runScan, getScanCount } from "@/lib/scan.functions";
+import { Footer } from "@/components/Footer";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 
 export const Route = createFileRoute("/")({
   loader: async () => {
@@ -200,21 +207,70 @@ function Index() {
             </li>
           </ul>
         </div>
-        <p className="mt-6 text-center text-sm text-muted-foreground">
-          Curious what each check means?{" "}
-          <Link to="/about" className="font-medium text-primary hover:underline">
-            See all ten and why they matter
+        <div className="mt-6 flex flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground sm:flex-row sm:gap-3">
+          <Link
+            to="/report/sample"
+            className="font-mono text-xs font-semibold text-primary hover:underline"
+          >
+            See a full sample report →
           </Link>
-          .
-        </p>
+          <span className="hidden sm:inline">·</span>
+          <span>
+            Curious what each check means?{" "}
+            <Link to="/about" className="font-medium text-primary hover:underline">
+              See all ten and why they matter
+            </Link>
+            .
+          </span>
+        </div>
       </section>
 
-      <footer className="border-t border-border px-6 py-10 text-center font-mono text-xs text-muted-foreground">
-        ShipCheck · check before you ship ·{" "}
-        <Link to="/about" className="hover:text-foreground">
-          what we check
-        </Link>
-      </footer>
+      <section className="mx-auto max-w-3xl px-6 pb-24">
+        <h2 className="text-center font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
+          Frequently asked questions
+        </h2>
+        <h3 className="mt-3 text-center text-2xl font-semibold tracking-tight sm:text-3xl">
+          Common questions before launch
+        </h3>
+        <div className="mt-8 rounded-xl border border-border bg-card p-6 shadow-card">
+          <Accordion type="single" collapsible className="w-full">
+            <AccordionItem value="faq-1">
+              <AccordionTrigger className="text-left font-medium">
+                Do you store my site's data?
+              </AccordionTrigger>
+              <AccordionContent className="text-muted-foreground leading-relaxed">
+                Only the URL and scan results, to generate your report; we don't crawl beyond the page you submit, and we never sell your data.
+              </AccordionContent>
+            </AccordionItem>
+            <AccordionItem value="faq-2">
+              <AccordionTrigger className="text-left font-medium">
+                Can I rescan for free after I fix issues?
+              </AccordionTrigger>
+              <AccordionContent className="text-muted-foreground leading-relaxed">
+                Yes, rescanning the same URL is free once you've unlocked a report for it.
+              </AccordionContent>
+            </AccordionItem>
+            <AccordionItem value="faq-3">
+              <AccordionTrigger className="text-left font-medium">
+                What if my site needs a login to view?
+              </AccordionTrigger>
+              <AccordionContent className="text-muted-foreground leading-relaxed">
+                Currently we only check publicly accessible pages. If your app is behind authentication or a waitlist, scan your landing or login page instead.
+              </AccordionContent>
+            </AccordionItem>
+            <AccordionItem value="faq-4">
+              <AccordionTrigger className="text-left font-medium">
+                Do you offer refunds?
+              </AccordionTrigger>
+              <AccordionContent className="text-muted-foreground leading-relaxed">
+                Because reports are delivered digitally and instantly upon scan completion, sales are generally final. However, if a technical issue prevented your report from generating or produced corrupted data, contact support within 7 days for an immediate full refund.
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </div>
+      </section>
+
+      <Footer />
     </main>
   );
 }

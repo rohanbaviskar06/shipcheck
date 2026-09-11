@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { Footer } from "@/components/Footer";
 
 export const Route = createFileRoute("/about")({
   head: () => ({
@@ -128,18 +129,24 @@ function About() {
             dollars once, gives you every issue with the exact fix, a PDF, and a link you can send
             to whoever owns the code.
           </p>
-          <Link
-            to="/"
-            className="mt-8 inline-flex h-11 items-center rounded-lg bg-primary px-6 text-sm font-semibold text-primary-foreground transition hover:opacity-90"
-          >
-            Scan my site
-          </Link>
+          <div className="mt-8 flex flex-wrap items-center gap-4">
+            <Link
+              to="/"
+              className="inline-flex h-11 items-center rounded-lg bg-primary px-6 text-sm font-semibold text-primary-foreground transition hover:opacity-90"
+            >
+              Scan my site
+            </Link>
+            <Link
+              to="/report/sample"
+              className="inline-flex h-11 items-center rounded-lg border border-border bg-card px-6 text-sm font-semibold text-foreground transition hover:border-primary"
+            >
+              See a full sample report →
+            </Link>
+          </div>
         </section>
       </article>
 
-      <footer className="border-t border-border px-6 py-10 text-center font-mono text-xs text-muted-foreground">
-        ShipCheck · check before you ship
-      </footer>
+      <Footer />
     </main>
   );
 }

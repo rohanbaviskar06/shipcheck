@@ -14,6 +14,11 @@ export type CheckResult = {
   detail: string;
   fix: string;
   weight: number;
+  preview?: {
+    title?: string;
+    description?: string;
+    image?: string;
+  };
 };
 
 export type ScanResult = {
@@ -221,12 +226,26 @@ export const runScan = createServerFn({ method: "POST" })
       !ogDesc && "og:description",
       !ogImage && "og:image",
     ].filter(Boolean) as string[];
+    let resolvedOgImage: string | undefined = undefined;
+    if (ogImage) {
+      try {
+        resolvedOgImage = new URL(ogImage, parsed).toString();
+      } catch {
+        resolvedOgImage = undefined;
+      }
+    }
+    const preview = {
+      title: ogTitle || titleRaw || undefined,
+      description: ogDesc || desc || undefined,
+      image: resolvedOgImage,
+    };
+
     if (missingOg.length === 3) {
-      add({ id: "og", name: "Social sharing preview", status: "critical", weight: 10, detail: "No Open Graph tags found, so shared links show no preview.", fix: "Add og:title, og:description and og:image (1200×630 absolute URL) meta tags." });
+      add({ id: "og", name: "Social sharing preview", status: "critical", weight: 10, detail: "No Open Graph tags found, so shared links show no preview.", fix: "Add og:title, og:description and og:image (1200×630 absolute URL) meta tags.", preview });
     } else if (missingOg.length > 0) {
-      add({ id: "og", name: "Social sharing preview", status: "warning", weight: 10, detail: `Missing: ${missingOg.join(", ")}.`, fix: `Add the missing tags: ${missingOg.join(", ")}. Use an absolute https URL for the image.` });
+      add({ id: "og", name: "Social sharing preview", status: "warning", weight: 10, detail: `Missing: ${missingOg.join(", ")}.`, fix: `Add the missing tags: ${missingOg.join(", ")}. Use an absolute https URL for the image.`, preview });
     } else {
-      add({ id: "og", name: "Social sharing preview", status: "pass", weight: 10, detail: "og:title, og:description and og:image are all present.", fix: "" });
+      add({ id: "og", name: "Social sharing preview", status: "pass", weight: 10, detail: "og:title, og:description and og:image are all present.", fix: "", preview });
     }
 
     // 4. Favicon
