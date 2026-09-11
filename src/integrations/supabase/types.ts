@@ -93,6 +93,7 @@ export type Database = {
           id: string
           ip_hash: string | null
           paid: boolean
+          previous_scan_id: string | null
           razorpay_order_id: string | null
           razorpay_payment_id: string | null
           score: number
@@ -107,6 +108,7 @@ export type Database = {
           id?: string
           ip_hash?: string | null
           paid?: boolean
+          previous_scan_id?: string | null
           razorpay_order_id?: string | null
           razorpay_payment_id?: string | null
           score: number
@@ -121,6 +123,7 @@ export type Database = {
           id?: string
           ip_hash?: string | null
           paid?: boolean
+          previous_scan_id?: string | null
           razorpay_order_id?: string | null
           razorpay_payment_id?: string | null
           score?: number

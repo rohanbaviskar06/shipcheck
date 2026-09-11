@@ -21,6 +21,13 @@ export type CheckResult = {
   };
 };
 
+export type PreviousScanSummary = {
+  id: string;
+  score: number;
+  checks: CheckResult[];
+  scannedAt: string;
+};
+
 export type ScanResult = {
   id: string;
   url: string;
@@ -30,6 +37,11 @@ export type ScanResult = {
   paid: boolean;
   /** Absolute URL of this report's share image, for og:image / twitter:image. */
   ogImage: string;
+  email?: string | null;
+  previousScanId?: string | null;
+  previousScan?: PreviousScanSummary | null;
+  alreadyUnlocked?: boolean;
+  existingPaidScanId?: string | null;
 };
 
 function siteOrigin(): string {
@@ -148,6 +160,194 @@ function footerRegion(html: string): string {
   return `${footer} ${nav}` || html;
 }
 
+export async function inspectUrl(rawUrl: string): Promise<{
+  url: string;
+  host: string;
+  score: number;
+  checks: CheckResult[];
+}> {
+  const input = normalizeUrl(rawUrl);
+  let parsed: URL;
+  try {
+    parsed = new URL(input);
+  } catch {
+    throw new Error("That doesn't look like a valid website address.");
+  }
+
+  const page = await safeFetch(parsed.toString());
+  if (!page.ok || !page.text) {
+    throw new Error("We couldn't load that page. Check the address and try again.");
+  }
+  const html = page.text;
+  const origin = parsed.origin;
+
+  const [robots, sitemap, llms] = await Promise.all([
+    safeFetch(`${origin}/robots.txt`),
+    safeFetch(`${origin}/sitemap.xml`),
+    safeFetch(`${origin}/llms.txt`),
+  ]);
+
+  const checks: CheckResult[] = [];
+  const add = (c: CheckResult) => checks.push(c);
+
+  // 1. Title
+  const titleRaw = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/\s+/g, " ").trim() ?? "";
+  if (!titleRaw) {
+    add({ id: "title", name: "Page title", status: "critical", weight: 12, detail: "No title tag found on the page.", fix: "Add a <title> tag in the page head, 10–60 characters, leading with your main keyword." });
+  } else if (titleRaw.length < 10 || titleRaw.length > 60) {
+    add({ id: "title", name: "Page title", status: "warning", weight: 12, detail: `Title is ${titleRaw.length} characters ("${titleRaw.slice(0, 80)}").`, fix: "Rewrite the title to sit between 10 and 60 characters so search results don't truncate it." });
+  } else {
+    add({ id: "title", name: "Page title", status: "pass", weight: 12, detail: `"${titleRaw}" (${titleRaw.length} characters).`, fix: "" });
+  }
+
+  // 2. Meta description
+  const desc = metaContent(html, "name", "description")?.replace(/\s+/g, " ").trim() ?? "";
+  if (!desc) {
+    add({ id: "description", name: "Meta description", status: "critical", weight: 10, detail: "No meta description found.", fix: 'Add <meta name="description" content="..."> with a 50–160 character summary of the page.' });
+  } else if (desc.length < 50 || desc.length > 160) {
+    add({ id: "description", name: "Meta description", status: "warning", weight: 10, detail: `Description is ${desc.length} characters.`, fix: "Trim or expand the description to 50–160 characters." });
+  } else {
+    add({ id: "description", name: "Meta description", status: "pass", weight: 10, detail: `${desc.length} characters, within the ideal range.`, fix: "" });
+  }
+
+  // 3. Open Graph
+  const ogImage = metaContent(html, "property", "og:image");
+  const ogTitle = metaContent(html, "property", "og:title");
+  const ogDesc = metaContent(html, "property", "og:description");
+  const missingOg = [
+    !ogTitle && "og:title",
+    !ogDesc && "og:description",
+    !ogImage && "og:image",
+  ].filter(Boolean) as string[];
+  let resolvedOgImage: string | undefined = undefined;
+  if (ogImage) {
+    try {
+      resolvedOgImage = new URL(ogImage, parsed).toString();
+    } catch {
+      resolvedOgImage = undefined;
+    }
+  }
+  const preview = {
+    title: ogTitle || titleRaw || undefined,
+    description: ogDesc || desc || undefined,
+    image: resolvedOgImage,
+  };
+
+  if (missingOg.length === 3) {
+    add({ id: "og", name: "Social sharing preview", status: "critical", weight: 10, detail: "No Open Graph tags found, so shared links show no preview.", fix: "Add og:title, og:description and og:image (1200×630 absolute URL) meta tags.", preview });
+  } else if (missingOg.length > 0) {
+    add({ id: "og", name: "Social sharing preview", status: "warning", weight: 10, detail: `Missing: ${missingOg.join(", ")}.`, fix: `Add the missing tags: ${missingOg.join(", ")}. Use an absolute https URL for the image.`, preview });
+  } else {
+    add({ id: "og", name: "Social sharing preview", status: "pass", weight: 10, detail: "og:title, og:description and og:image are all present.", fix: "", preview });
+  }
+
+  // 4. Favicon
+  const iconHref = linkHrefByRel(html, /icon/i);
+  let faviconOk = false;
+  let faviconDetail = "";
+  if (iconHref) {
+    const abs = new URL(iconHref, parsed).toString();
+    const r = await safeFetch(abs, 8000);
+    faviconOk = r.ok;
+    faviconDetail = r.ok ? `Icon loads from ${abs}.` : `Declared icon ${abs} did not load (status ${r.status || "no response"}).`;
+  } else {
+    const r = await safeFetch(`${origin}/favicon.ico`, 8000);
+    faviconOk = r.ok;
+    faviconDetail = r.ok ? "Found /favicon.ico but it isn't declared in the page head." : "No favicon declared and /favicon.ico is missing.";
+  }
+  add({
+    id: "favicon",
+    name: "Favicon",
+    status: faviconOk && iconHref ? "pass" : faviconOk ? "warning" : "warning",
+    weight: 6,
+    detail: faviconDetail,
+    fix: faviconOk && iconHref ? "" : 'Add an icon file and declare it: <link rel="icon" href="/favicon.ico">.',
+  });
+
+  // 5. robots.txt
+  if (!robots.ok || !robots.text.trim()) {
+    add({ id: "robots", name: "robots.txt", status: "warning", weight: 8, detail: "No robots.txt found at the site root.", fix: "Add a robots.txt that allows crawling and points to your sitemap." });
+  } else if (robotsBlocksAll(robots.text)) {
+    add({ id: "robots", name: "robots.txt", status: "critical", weight: 8, detail: "robots.txt blocks every crawler with 'Disallow: /'.", fix: "Remove the site-wide Disallow: / rule before launch, or search engines will never index you." });
+  } else {
+    add({ id: "robots", name: "robots.txt", status: "pass", weight: 8, detail: "robots.txt exists and does not block the whole site.", fix: "" });
+  }
+
+  // 6. sitemap.xml
+  const sitemapFromRobots = robots.text.match(/^sitemap:\s*(\S+)/im)?.[1];
+  if (sitemap.ok && /<urlset|<sitemapindex/i.test(sitemap.text)) {
+    add({ id: "sitemap", name: "Sitemap", status: "pass", weight: 8, detail: "sitemap.xml is reachable and looks valid.", fix: "" });
+  } else if (sitemapFromRobots) {
+    add({ id: "sitemap", name: "Sitemap", status: "warning", weight: 8, detail: `No /sitemap.xml, but robots.txt points to ${sitemapFromRobots}.`, fix: "Also serve the sitemap at /sitemap.xml — many tools look there first." });
+  } else {
+    add({ id: "sitemap", name: "Sitemap", status: "critical", weight: 8, detail: "No sitemap found at /sitemap.xml and none listed in robots.txt.", fix: "Generate a sitemap.xml listing your public pages and reference it from robots.txt." });
+  }
+
+  // 7. HTTPS
+  if (parsed.protocol === "https:") {
+    add({ id: "https", name: "HTTPS", status: "pass", weight: 12, detail: "The page is served securely over HTTPS.", fix: "" });
+  } else {
+    const secure = await safeFetch(`https://${parsed.host}${parsed.pathname}`, 8000);
+    add({
+      id: "https",
+      name: "HTTPS",
+      status: "critical",
+      weight: 12,
+      detail: secure.ok ? "The page was requested over HTTP; HTTPS works but isn't enforced." : "The site does not serve a working HTTPS version.",
+      fix: "Install a valid SSL certificate and redirect all HTTP traffic to HTTPS.",
+    });
+  }
+
+  // 8. Viewport
+  const viewport = metaContent(html, "name", "viewport");
+  if (!viewport) {
+    add({ id: "viewport", name: "Mobile viewport", status: "critical", weight: 10, detail: "No viewport meta tag, so the page won't scale on phones.", fix: 'Add <meta name="viewport" content="width=device-width, initial-scale=1">.' });
+  } else if (!/width\s*=\s*device-width/i.test(viewport)) {
+    add({ id: "viewport", name: "Mobile viewport", status: "warning", weight: 10, detail: `Viewport is set to "${viewport}".`, fix: 'Use content="width=device-width, initial-scale=1" for correct mobile scaling.' });
+  } else {
+    add({ id: "viewport", name: "Mobile viewport", status: "pass", weight: 10, detail: "Viewport is configured for mobile devices.", fix: "" });
+  }
+
+  // 9. AI crawler access
+  const aiBots = ["GPTBot", "ClaudeBot", "Google-Extended", "PerplexityBot"];
+  const blocked = robots.ok ? aiBots.filter((b) => robotsBlocksBot(robots.text, b)) : [];
+  const hasLlms = llms.ok && llms.text.trim().length > 0;
+  if (blocked.length > 0) {
+    add({ id: "ai", name: "AI crawler visibility", status: "critical", weight: 12, detail: `robots.txt blocks ${blocked.join(", ")}.`, fix: "Remove those Disallow rules if you want to appear in AI answers, and add an llms.txt describing your product." });
+  } else if (!hasLlms) {
+    add({ id: "ai", name: "AI crawler visibility", status: "warning", weight: 12, detail: "AI crawlers aren't blocked, but there's no llms.txt at the site root.", fix: "Add /llms.txt with a plain-text summary of your product, key pages and contact details." });
+  } else {
+    add({ id: "ai", name: "AI crawler visibility", status: "pass", weight: 12, detail: "AI crawlers are allowed and llms.txt is present.", fix: "" });
+  }
+
+  // 10. Legal pages
+  const region = footerRegion(html);
+  const hasPrivacy = /privacy/i.test(region);
+  const hasTerms = /\bterms\b|terms of service|terms & conditions|terms and conditions/i.test(region);
+  if (!hasPrivacy && !hasTerms) {
+    add({ id: "legal", name: "Legal pages", status: "critical", weight: 12, detail: "No privacy policy or terms links found in the navigation or footer.", fix: "Publish a privacy policy and terms page, then link both from the footer." });
+  } else if (!hasPrivacy || !hasTerms) {
+    add({ id: "legal", name: "Legal pages", status: "warning", weight: 12, detail: `Found ${hasPrivacy ? "privacy" : "terms"} but not ${hasPrivacy ? "terms" : "privacy"}.`, fix: `Add the missing ${hasPrivacy ? "terms" : "privacy policy"} page and link it in the footer.` });
+  } else {
+    add({ id: "legal", name: "Legal pages", status: "pass", weight: 12, detail: "Privacy and terms links were both detected.", fix: "" });
+  }
+
+  const totalWeight = checks.reduce((s, c) => s + c.weight, 0);
+  const earned = checks.reduce(
+    (s, c) => s + c.weight * (c.status === "pass" ? 1 : c.status === "warning" ? 0.5 : 0),
+    0,
+  );
+  let score = Math.round((earned / totalWeight) * 100);
+  if (checks.some((c) => c.status === "critical")) score = Math.min(score, 69);
+
+  return {
+    url: parsed.toString(),
+    host: parsed.host,
+    checks,
+    score,
+  };
+}
+
 export const runScan = createServerFn({ method: "POST" })
   .inputValidator((data: { url: string }) => {
     if (!data || typeof data.url !== "string" || data.url.trim().length < 3) {
@@ -156,17 +356,38 @@ export const runScan = createServerFn({ method: "POST" })
     return { url: data.url.trim() };
   })
   .handler(async ({ data }): Promise<ScanResult> => {
+    const supabase = serverSupabase();
     const input = normalizeUrl(data.url);
-    let parsed: URL;
-    try {
-      parsed = new URL(input);
-    } catch {
-      throw new Error("That doesn't look like a valid website address.");
+    const stripped = input.replace(/\/+$/, "");
+    const withSlash = `${stripped}/`;
+
+    // Requirement 4: Check if there's already a paid=true scan for that exact URL
+    const { data: existingPaid } = await supabase
+      .from("scans")
+      .select("id, url, score, checks, created_at, paid, email")
+      .or(`url.eq."${input}",url.eq."${stripped}",url.eq."${withSlash}"`)
+      .eq("paid", true)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingPaid) {
+      const all = (existingPaid.checks ?? []) as unknown as CheckResult[];
+      return {
+        id: existingPaid.id,
+        url: existingPaid.url,
+        score: existingPaid.score,
+        checks: all,
+        scannedAt: existingPaid.created_at,
+        paid: true,
+        email: existingPaid.email,
+        ogImage: `${siteOrigin()}/api/public/report/${existingPaid.id}/og-image`,
+        alreadyUnlocked: true,
+      };
     }
 
     const { hashIp, logEvent } = await import("@/lib/analytics.server");
     const ipHash = await hashIp(requestIp());
-    const supabase = serverSupabase();
     const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const { count: recent } = await supabase
       .from("scans")
@@ -181,173 +402,8 @@ export const runScan = createServerFn({ method: "POST" })
       );
     }
 
-    const page = await safeFetch(parsed.toString());
-    if (!page.ok || !page.text) {
-      throw new Error("We couldn't load that page. Check the address and try again.");
-    }
-    const html = page.text;
-    const origin = parsed.origin;
+    const { url, score, checks, host } = await inspectUrl(data.url);
 
-    const [robots, sitemap, llms] = await Promise.all([
-      safeFetch(`${origin}/robots.txt`),
-      safeFetch(`${origin}/sitemap.xml`),
-      safeFetch(`${origin}/llms.txt`),
-    ]);
-
-    const checks: CheckResult[] = [];
-    const add = (c: CheckResult) => checks.push(c);
-
-    // 1. Title
-    const titleRaw = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/\s+/g, " ").trim() ?? "";
-    if (!titleRaw) {
-      add({ id: "title", name: "Page title", status: "critical", weight: 12, detail: "No title tag found on the page.", fix: "Add a <title> tag in the page head, 10–60 characters, leading with your main keyword." });
-    } else if (titleRaw.length < 10 || titleRaw.length > 60) {
-      add({ id: "title", name: "Page title", status: "warning", weight: 12, detail: `Title is ${titleRaw.length} characters ("${titleRaw.slice(0, 80)}").`, fix: "Rewrite the title to sit between 10 and 60 characters so search results don't truncate it." });
-    } else {
-      add({ id: "title", name: "Page title", status: "pass", weight: 12, detail: `"${titleRaw}" (${titleRaw.length} characters).`, fix: "" });
-    }
-
-    // 2. Meta description
-    const desc = metaContent(html, "name", "description")?.replace(/\s+/g, " ").trim() ?? "";
-    if (!desc) {
-      add({ id: "description", name: "Meta description", status: "critical", weight: 10, detail: "No meta description found.", fix: 'Add <meta name="description" content="..."> with a 50–160 character summary of the page.' });
-    } else if (desc.length < 50 || desc.length > 160) {
-      add({ id: "description", name: "Meta description", status: "warning", weight: 10, detail: `Description is ${desc.length} characters.`, fix: "Trim or expand the description to 50–160 characters." });
-    } else {
-      add({ id: "description", name: "Meta description", status: "pass", weight: 10, detail: `${desc.length} characters, within the ideal range.`, fix: "" });
-    }
-
-    // 3. Open Graph
-    const ogImage = metaContent(html, "property", "og:image");
-    const ogTitle = metaContent(html, "property", "og:title");
-    const ogDesc = metaContent(html, "property", "og:description");
-    const missingOg = [
-      !ogTitle && "og:title",
-      !ogDesc && "og:description",
-      !ogImage && "og:image",
-    ].filter(Boolean) as string[];
-    let resolvedOgImage: string | undefined = undefined;
-    if (ogImage) {
-      try {
-        resolvedOgImage = new URL(ogImage, parsed).toString();
-      } catch {
-        resolvedOgImage = undefined;
-      }
-    }
-    const preview = {
-      title: ogTitle || titleRaw || undefined,
-      description: ogDesc || desc || undefined,
-      image: resolvedOgImage,
-    };
-
-    if (missingOg.length === 3) {
-      add({ id: "og", name: "Social sharing preview", status: "critical", weight: 10, detail: "No Open Graph tags found, so shared links show no preview.", fix: "Add og:title, og:description and og:image (1200×630 absolute URL) meta tags.", preview });
-    } else if (missingOg.length > 0) {
-      add({ id: "og", name: "Social sharing preview", status: "warning", weight: 10, detail: `Missing: ${missingOg.join(", ")}.`, fix: `Add the missing tags: ${missingOg.join(", ")}. Use an absolute https URL for the image.`, preview });
-    } else {
-      add({ id: "og", name: "Social sharing preview", status: "pass", weight: 10, detail: "og:title, og:description and og:image are all present.", fix: "", preview });
-    }
-
-    // 4. Favicon
-    const iconHref = linkHrefByRel(html, /icon/i);
-    let faviconOk = false;
-    let faviconDetail = "";
-    if (iconHref) {
-      const abs = new URL(iconHref, parsed).toString();
-      const r = await safeFetch(abs, 8000);
-      faviconOk = r.ok;
-      faviconDetail = r.ok ? `Icon loads from ${abs}.` : `Declared icon ${abs} did not load (status ${r.status || "no response"}).`;
-    } else {
-      const r = await safeFetch(`${origin}/favicon.ico`, 8000);
-      faviconOk = r.ok;
-      faviconDetail = r.ok ? "Found /favicon.ico but it isn't declared in the page head." : "No favicon declared and /favicon.ico is missing.";
-    }
-    add({
-      id: "favicon",
-      name: "Favicon",
-      status: faviconOk && iconHref ? "pass" : faviconOk ? "warning" : "warning",
-      weight: 6,
-      detail: faviconDetail,
-      fix: faviconOk && iconHref ? "" : 'Add an icon file and declare it: <link rel="icon" href="/favicon.ico">.',
-    });
-
-    // 5. robots.txt
-    if (!robots.ok || !robots.text.trim()) {
-      add({ id: "robots", name: "robots.txt", status: "warning", weight: 8, detail: "No robots.txt found at the site root.", fix: "Add a robots.txt that allows crawling and points to your sitemap." });
-    } else if (robotsBlocksAll(robots.text)) {
-      add({ id: "robots", name: "robots.txt", status: "critical", weight: 8, detail: "robots.txt blocks every crawler with 'Disallow: /'.", fix: "Remove the site-wide Disallow: / rule before launch, or search engines will never index you." });
-    } else {
-      add({ id: "robots", name: "robots.txt", status: "pass", weight: 8, detail: "robots.txt exists and does not block the whole site.", fix: "" });
-    }
-
-    // 6. sitemap.xml
-    const sitemapFromRobots = robots.text.match(/^sitemap:\s*(\S+)/im)?.[1];
-    if (sitemap.ok && /<urlset|<sitemapindex/i.test(sitemap.text)) {
-      add({ id: "sitemap", name: "Sitemap", status: "pass", weight: 8, detail: "sitemap.xml is reachable and looks valid.", fix: "" });
-    } else if (sitemapFromRobots) {
-      add({ id: "sitemap", name: "Sitemap", status: "warning", weight: 8, detail: `No /sitemap.xml, but robots.txt points to ${sitemapFromRobots}.`, fix: "Also serve the sitemap at /sitemap.xml — many tools look there first." });
-    } else {
-      add({ id: "sitemap", name: "Sitemap", status: "critical", weight: 8, detail: "No sitemap found at /sitemap.xml and none listed in robots.txt.", fix: "Generate a sitemap.xml listing your public pages and reference it from robots.txt." });
-    }
-
-    // 7. HTTPS
-    if (parsed.protocol === "https:") {
-      add({ id: "https", name: "HTTPS", status: "pass", weight: 12, detail: "The page is served securely over HTTPS.", fix: "" });
-    } else {
-      const secure = await safeFetch(`https://${parsed.host}${parsed.pathname}`, 8000);
-      add({
-        id: "https",
-        name: "HTTPS",
-        status: "critical",
-        weight: 12,
-        detail: secure.ok ? "The page was requested over HTTP; HTTPS works but isn't enforced." : "The site does not serve a working HTTPS version.",
-        fix: "Install a valid SSL certificate and redirect all HTTP traffic to HTTPS.",
-      });
-    }
-
-    // 8. Viewport
-    const viewport = metaContent(html, "name", "viewport");
-    if (!viewport) {
-      add({ id: "viewport", name: "Mobile viewport", status: "critical", weight: 10, detail: "No viewport meta tag, so the page won't scale on phones.", fix: 'Add <meta name="viewport" content="width=device-width, initial-scale=1">.' });
-    } else if (!/width\s*=\s*device-width/i.test(viewport)) {
-      add({ id: "viewport", name: "Mobile viewport", status: "warning", weight: 10, detail: `Viewport is set to "${viewport}".`, fix: 'Use content="width=device-width, initial-scale=1" for correct mobile scaling.' });
-    } else {
-      add({ id: "viewport", name: "Mobile viewport", status: "pass", weight: 10, detail: "Viewport is configured for mobile devices.", fix: "" });
-    }
-
-    // 9. AI crawler access
-    const aiBots = ["GPTBot", "ClaudeBot", "Google-Extended", "PerplexityBot"];
-    const blocked = robots.ok ? aiBots.filter((b) => robotsBlocksBot(robots.text, b)) : [];
-    const hasLlms = llms.ok && llms.text.trim().length > 0;
-    if (blocked.length > 0) {
-      add({ id: "ai", name: "AI crawler visibility", status: "critical", weight: 12, detail: `robots.txt blocks ${blocked.join(", ")}.`, fix: "Remove those Disallow rules if you want to appear in AI answers, and add an llms.txt describing your product." });
-    } else if (!hasLlms) {
-      add({ id: "ai", name: "AI crawler visibility", status: "warning", weight: 12, detail: "AI crawlers aren't blocked, but there's no llms.txt at the site root.", fix: "Add /llms.txt with a plain-text summary of your product, key pages and contact details." });
-    } else {
-      add({ id: "ai", name: "AI crawler visibility", status: "pass", weight: 12, detail: "AI crawlers are allowed and llms.txt is present.", fix: "" });
-    }
-
-    // 10. Legal pages
-    const region = footerRegion(html);
-    const hasPrivacy = /privacy/i.test(region);
-    const hasTerms = /\bterms\b|terms of service|terms & conditions|terms and conditions/i.test(region);
-    if (!hasPrivacy && !hasTerms) {
-      add({ id: "legal", name: "Legal pages", status: "critical", weight: 12, detail: "No privacy policy or terms links found in the navigation or footer.", fix: "Publish a privacy policy and terms page, then link both from the footer." });
-    } else if (!hasPrivacy || !hasTerms) {
-      add({ id: "legal", name: "Legal pages", status: "warning", weight: 12, detail: `Found ${hasPrivacy ? "privacy" : "terms"} but not ${hasPrivacy ? "terms" : "privacy"}.`, fix: `Add the missing ${hasPrivacy ? "terms" : "privacy policy"} page and link it in the footer.` });
-    } else {
-      add({ id: "legal", name: "Legal pages", status: "pass", weight: 12, detail: "Privacy and terms links were both detected.", fix: "" });
-    }
-
-    const totalWeight = checks.reduce((s, c) => s + c.weight, 0);
-    const earned = checks.reduce(
-      (s, c) => s + c.weight * (c.status === "pass" ? 1 : c.status === "warning" ? 0.5 : 0),
-      0,
-    );
-    let score = Math.round((earned / totalWeight) * 100);
-    if (checks.some((c) => c.status === "critical")) score = Math.min(score, 69);
-
-    const url = parsed.toString();
     const { data: row, error } = await supabase
       .from("scans")
       .insert({ url, score, checks, ip_hash: ipHash })
@@ -358,7 +414,7 @@ export const runScan = createServerFn({ method: "POST" })
       throw new Error("We finished the scan but couldn't save the report. Please try again.");
     }
 
-    await logEvent("scan_completed", { scanId: row.id, host: parsed.host, score });
+    await logEvent("scan_completed", { scanId: row.id, host, score });
 
     return {
       id: row.id,
@@ -372,6 +428,97 @@ export const runScan = createServerFn({ method: "POST" })
     };
   });
 
+export const rescanUrl = createServerFn({ method: "POST" })
+  .inputValidator((data: { scanId: string }) => {
+    const scanId = typeof data?.scanId === "string" ? data.scanId.trim() : "";
+    if (!/^[0-9a-f-]{36}$/i.test(scanId)) throw new Error("Report not found.");
+    return { scanId };
+  })
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const supabase = serverSupabase();
+
+    const { data: currentScan, error: fetchErr } = await supabase
+      .from("scans")
+      .select("id, url, paid")
+      .eq("id", data.scanId)
+      .maybeSingle();
+
+    if (fetchErr || !currentScan) {
+      throw new Error("Report not found.");
+    }
+
+    let isPaid = currentScan.paid;
+    if (!isPaid) {
+      const { data: paidMatch } = await supabase
+        .from("scans")
+        .select("id")
+        .eq("url", currentScan.url)
+        .eq("paid", true)
+        .limit(1)
+        .maybeSingle();
+      if (paidMatch) isPaid = true;
+    }
+
+    if (!isPaid) {
+      throw new Error("Free re-scans are only available for unlocked reports.");
+    }
+
+    const { url, score, checks, host } = await inspectUrl(currentScan.url);
+
+    const { hashIp, logEvent } = await import("@/lib/analytics.server");
+    const ipHash = await hashIp(requestIp());
+
+    let newScanId: string | null = null;
+    try {
+      const { data: inserted, error: insertError } = await supabase
+        .from("scans")
+        .insert({
+          url,
+          score,
+          checks,
+          paid: true,
+          previous_scan_id: currentScan.id,
+          ip_hash: ipHash,
+        })
+        .select("id")
+        .single();
+
+      if (!insertError && inserted) {
+        newScanId = inserted.id;
+      }
+    } catch {
+      // Column previous_scan_id might not exist yet
+    }
+
+    if (!newScanId) {
+      const { data: fallback, error: fbErr } = await supabase
+        .from("scans")
+        .insert({
+          url,
+          score,
+          checks,
+          paid: true,
+          ip_hash: ipHash,
+        })
+        .select("id")
+        .single();
+
+      if (fbErr || !fallback) {
+        throw new Error("We finished the scan but couldn't save the report. Please try again.");
+      }
+      newScanId = fallback.id;
+    }
+
+    await logEvent("scan_rescanned", {
+      originalScanId: currentScan.id,
+      newScanId,
+      host,
+      score,
+    });
+
+    return { id: newScanId };
+  });
+
 export const getScan = createServerFn({ method: "GET" })
   .inputValidator((data: { id: string }) => {
     const id = typeof data?.id === "string" ? data.id.trim() : "";
@@ -380,13 +527,37 @@ export const getScan = createServerFn({ method: "GET" })
   })
   .handler(async ({ data }): Promise<ScanResult | null> => {
     const supabase = serverSupabase();
-    const { data: row, error } = await supabase
+    let row: {
+      id: string;
+      url: string;
+      score: number;
+      checks: unknown;
+      paid: boolean;
+      created_at: string;
+      email?: string | null;
+      previous_scan_id?: string | null;
+    } | null = null;
+    let hasPrevCol = true;
+
+    const { data: r1, error: e1 } = await supabase
       .from("scans")
-      .select("id, url, score, checks, paid, created_at")
+      .select("id, url, score, checks, paid, created_at, email, previous_scan_id")
       .eq("id", data.id)
       .maybeSingle();
 
-    if (error || !row) return null;
+    if (!e1 && r1) {
+      row = r1 as typeof row;
+    } else {
+      hasPrevCol = false;
+      const { data: r2 } = await supabase
+        .from("scans")
+        .select("id, url, score, checks, paid, created_at, email")
+        .eq("id", data.id)
+        .maybeSingle();
+      row = r2 as typeof row;
+    }
+
+    if (!row) return null;
 
     const all = (row.checks ?? []) as unknown as CheckResult[];
     // Locked reports never receive the full fix instructions over the wire.
@@ -398,6 +569,65 @@ export const getScan = createServerFn({ method: "GET" })
           fix: "",
         }));
 
+    let previousScan: PreviousScanSummary | null = null;
+    const prevId = hasPrevCol ? row.previous_scan_id : null;
+
+    if (prevId) {
+      const { data: prevRow } = await supabase
+        .from("scans")
+        .select("id, score, checks, created_at")
+        .eq("id", prevId)
+        .maybeSingle();
+      if (prevRow) {
+        previousScan = {
+          id: prevRow.id,
+          score: prevRow.score,
+          checks: (prevRow.checks ?? []) as unknown as CheckResult[],
+          scannedAt: prevRow.created_at,
+        };
+      }
+    }
+
+    if (!previousScan) {
+      const { data: earlierRow } = await supabase
+        .from("scans")
+        .select("id, score, checks, created_at")
+        .eq("url", row.url)
+        .lt("created_at", row.created_at)
+        .eq("paid", true)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (earlierRow) {
+        previousScan = {
+          id: earlierRow.id,
+          score: earlierRow.score,
+          checks: (earlierRow.checks ?? []) as unknown as CheckResult[],
+          scannedAt: earlierRow.created_at,
+        };
+      }
+    }
+
+    // If report is unpaid, check if an unlocked report exists for this URL
+    let existingPaidScanId: string | null = null;
+    if (!row.paid) {
+      const stripped = row.url.replace(/\/+$/, "");
+      const withSlash = `${stripped}/`;
+      const { data: paidMatch } = await supabase
+        .from("scans")
+        .select("id")
+        .or(`url.eq."${row.url}",url.eq."${stripped}",url.eq."${withSlash}"`)
+        .eq("paid", true)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (paidMatch && paidMatch.id !== row.id) {
+        existingPaidScanId = paidMatch.id;
+      }
+    }
+
     return {
       id: row.id,
       url: row.url,
@@ -405,9 +635,99 @@ export const getScan = createServerFn({ method: "GET" })
       checks,
       scannedAt: row.created_at,
       paid: row.paid,
+      email: row.email || null,
       ogImage: `${siteOrigin()}/api/public/report/${row.id}/og-image`,
+      previousScanId: prevId || previousScan?.id || null,
+      previousScan,
+      existingPaidScanId,
     };
   });
+
+export const recoverReport = createServerFn({ method: "POST" })
+  .inputValidator((data: { url: string; email: string }) => {
+    const rawUrl = typeof data?.url === "string" ? data.url.trim() : "";
+    const email = typeof data?.email === "string" ? data.email.trim().toLowerCase() : "";
+    if (!rawUrl || rawUrl.length < 3) {
+      throw new Error("Please enter a website address.");
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) || email.length > 200) {
+      throw new Error("Please enter a valid email address.");
+    }
+    return { url: rawUrl, email };
+  })
+  .handler(async ({ data }): Promise<{ ok: boolean; message: string; directUrl?: string }> => {
+    const supabase = serverSupabase();
+    const normalized = normalizeUrl(data.url);
+    const stripped = normalized.replace(/\/+$/, "");
+    const withSlash = `${stripped}/`;
+
+    // Query scans where paid is true, email matches (case insensitive), and URL matches
+    const { data: matchedScan } = await supabase
+      .from("scans")
+      .select("id, url, score, email, paid")
+      .ilike("email", data.email)
+      .or(`url.eq."${normalized}",url.eq."${stripped}",url.eq."${withSlash}"`)
+      .eq("paid", true)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    let scanToRecover = matchedScan;
+
+    if (!scanToRecover) {
+      let parsedHost = "";
+      try {
+        parsedHost = new URL(normalized).host;
+      } catch {
+        parsedHost = data.url;
+      }
+
+      const { data: hostScan } = await supabase
+        .from("scans")
+        .select("id, url, score, email, paid")
+        .ilike("email", data.email)
+        .ilike("url", `%${parsedHost}%`)
+        .eq("paid", true)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      scanToRecover = hostScan;
+    }
+
+    if (!scanToRecover) {
+      return {
+        ok: false,
+        message: "No unlocked report found matching that website address and email.",
+      };
+    }
+
+    let host = scanToRecover.url;
+    try {
+      host = new URL(scanToRecover.url).host.replace(/^www\./, "");
+    } catch {
+      /* keep raw */
+    }
+
+    const origin = siteOrigin();
+    const reportUrl = `${origin}/report/${scanToRecover.id}`;
+    const { sendReportLinkEmail } = await import("@/lib/email.server");
+    await sendReportLinkEmail({
+      to: data.email,
+      reportUrl,
+      host,
+      score: scanToRecover.score,
+      isRecovery: true,
+    });
+
+    return {
+      ok: true,
+      message: `We've sent your report link to ${data.email}.`,
+      directUrl: reportUrl,
+    };
+  });
+
+
 
 /** Optional mailing-list capture attached to a report. */
 export const saveEmail = createServerFn({ method: "POST" })

@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
-import { runScan, getScanCount } from "@/lib/scan.functions";
+import { runScan, getScanCount, recoverReport } from "@/lib/scan.functions";
 import { Footer } from "@/components/Footer";
 import {
   Accordion,
@@ -78,9 +78,21 @@ function Index() {
   const navigate = useNavigate();
   const { total } = Route.useLoaderData();
   const scan = useServerFn(runScan);
+  const recover = useServerFn(recoverReport);
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Recovery modal state
+  const [showRecovery, setShowRecovery] = useState(false);
+  const [recoveryUrl, setRecoveryUrl] = useState("");
+  const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [recoveryResult, setRecoveryResult] = useState<{
+    ok: boolean;
+    message: string;
+    directUrl?: string;
+  } | null>(null);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -89,11 +101,39 @@ function Index() {
     setError(null);
     try {
       const result = await scan({ data: { url } });
-      navigate({ to: "/report/$id", params: { id: result.id } });
+      if (result.alreadyUnlocked) {
+        navigate({
+          to: "/report/$id",
+          params: { id: result.id },
+          search: { alreadyUnlocked: "true" },
+        });
+      } else {
+        navigate({ to: "/report/$id", params: { id: result.id } });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong. Try again.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function onRecoverSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!recoveryUrl.trim() || !recoveryEmail.trim() || recoveryBusy) return;
+    setRecoveryBusy(true);
+    setRecoveryResult(null);
+    try {
+      const res = await recover({
+        data: { url: recoveryUrl, email: recoveryEmail },
+      });
+      setRecoveryResult(res);
+    } catch (err) {
+      setRecoveryResult({
+        ok: false,
+        message: err instanceof Error ? err.message : "Failed to recover report. Try again.",
+      });
+    } finally {
+      setRecoveryBusy(false);
     }
   }
 
@@ -147,7 +187,22 @@ function Index() {
           </button>
         </form>
         {error ? <p className="mt-4 font-mono text-xs text-destructive">{error}</p> : null}
-        <p className="mt-5 font-mono text-xs text-muted-foreground">
+
+        {/* Small "Lost your report?" link near the main scan input */}
+        <div className="mt-3 flex items-center justify-center">
+          <button
+            type="button"
+            onClick={() => {
+              setShowRecovery(true);
+              setRecoveryResult(null);
+            }}
+            className="font-mono text-xs text-muted-foreground transition hover:text-foreground hover:underline"
+          >
+            Lost your report? Recover it here &rarr;
+          </button>
+        </div>
+
+        <p className="mt-4 font-mono text-xs text-muted-foreground">
           Free score + your top 3 issues. Full report $9 once — no account, no subscription.
         </p>
         {total > 0 ? (
@@ -156,6 +211,90 @@ function Index() {
           </p>
         ) : null}
       </section>
+
+      {/* Report Recovery Modal */}
+      {showRecovery && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-xl text-left">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold tracking-tight">Recover your report</h3>
+              <button
+                type="button"
+                onClick={() => setShowRecovery(false)}
+                className="rounded-lg p-1 text-muted-foreground hover:bg-muted"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+              Enter the website URL and the email you used when unlocking your report. We'll send your direct link.
+            </p>
+
+            <form onSubmit={onRecoverSubmit} className="mt-5 space-y-3">
+              <div>
+                <label className="font-mono text-xs text-muted-foreground">Website address</label>
+                <input
+                  type="text"
+                  value={recoveryUrl}
+                  onChange={(e) => setRecoveryUrl(e.target.value)}
+                  placeholder="yourdomain.com"
+                  required
+                  className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 font-mono text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-ring/25"
+                />
+              </div>
+
+              <div>
+                <label className="font-mono text-xs text-muted-foreground">Email used at checkout</label>
+                <input
+                  type="email"
+                  value={recoveryEmail}
+                  onChange={(e) => setRecoveryEmail(e.target.value)}
+                  placeholder="you@yourdomain.com"
+                  required
+                  className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 font-mono text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-ring/25"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowRecovery(false)}
+                  className="h-10 rounded-lg border border-border px-4 font-mono text-xs text-muted-foreground hover:text-foreground"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={recoveryBusy}
+                  className="h-10 rounded-lg bg-primary px-5 text-sm font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-60"
+                >
+                  {recoveryBusy ? "Looking up…" : "Send report link"}
+                </button>
+              </div>
+            </form>
+
+            {recoveryResult && (
+              <div
+                className={`mt-4 rounded-xl border p-4 text-xs font-mono ${
+                  recoveryResult.ok
+                    ? "border-pass/30 bg-pass/10 text-pass"
+                    : "border-destructive/30 bg-destructive/10 text-destructive"
+                }`}
+              >
+                <p>{recoveryResult.message}</p>
+                {recoveryResult.directUrl && (
+                  <a
+                    href={recoveryResult.directUrl}
+                    className="mt-3 inline-block font-semibold underline underline-offset-4"
+                  >
+                    Open recovered report &rarr;
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <section className="border-y border-border bg-card/60">
         <div className="mx-auto grid max-w-5xl gap-10 px-6 py-16 sm:grid-cols-3">

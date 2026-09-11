@@ -1,13 +1,15 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
-import { getScan, saveEmail } from "@/lib/scan.functions";
+import { getScan, rescanUrl, saveEmail } from "@/lib/scan.functions";
 import type { CheckStatus } from "@/lib/scan.functions";
 import { createOrder, verifyPayment, PRICES, type Currency } from "@/lib/payment.functions";
 import { Footer } from "@/components/Footer";
 import { ShareCardPreviewSimulator } from "@/components/ShareCardPreviewSimulator";
-import { Download } from "lucide-react";
+import { Download, RefreshCw, CheckCircle2, Sparkles, Mail } from "lucide-react";
 import { generateReportPdf, downloadPdfBlob } from "@/lib/pdf";
+import { ScoreComparisonCard } from "@/components/ScoreComparisonCard";
+import { Confetti } from "@/components/Confetti";
 
 declare global {
   interface Window {
@@ -27,21 +29,39 @@ function loadRazorpay(): Promise<boolean> {
   });
 }
 
-function Unlock({ scanId, locked }: { scanId: string; locked: number }) {
+function Unlock({
+  scanId,
+  locked,
+  onUnlocked,
+}: {
+  scanId: string;
+  locked: number;
+  onUnlocked?: (email: string) => void;
+}) {
   const router = useRouter();
   const order = useServerFn(createOrder);
   const verify = useServerFn(verifyPayment);
   const [currency, setCurrency] = useState<Currency>("INR");
+  const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function pay() {
+  async function pay(e?: React.FormEvent) {
+    if (e) e.preventDefault();
     if (busy) return;
-    setBusy(true);
     setError(null);
+
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(trimmedEmail)) {
+      setError("Please enter a valid email address to receive your report.");
+      return;
+    }
+
+    setBusy(true);
     try {
-      const created = await order({ data: { id: scanId, currency } });
+      const created = await order({ data: { id: scanId, currency, email: trimmedEmail } });
       if (created.alreadyPaid) {
+        if (onUnlocked) onUnlocked(trimmedEmail);
         await router.invalidate();
         return;
       }
@@ -55,6 +75,9 @@ function Unlock({ scanId, locked }: { scanId: string; locked: number }) {
         currency: created.currency,
         name: "ShipCheck",
         description: "Full pre-launch report",
+        prefill: {
+          email: trimmedEmail,
+        },
         handler: async (res: {
           razorpay_order_id: string;
           razorpay_payment_id: string;
@@ -67,8 +90,10 @@ function Unlock({ scanId, locked }: { scanId: string; locked: number }) {
                 orderId: res.razorpay_order_id,
                 paymentId: res.razorpay_payment_id,
                 signature: res.razorpay_signature,
+                email: trimmedEmail,
               },
             });
+            if (onUnlocked) onUnlocked(trimmedEmail);
           } catch {
             /* webhook will unlock it shortly */
           }
@@ -90,56 +115,99 @@ function Unlock({ scanId, locked }: { scanId: string; locked: number }) {
   }
 
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-card/75 px-6 text-center backdrop-blur-[1px]">
-      <p className="text-base font-semibold tracking-tight">
+    <div className="relative z-10 flex flex-col items-center justify-center gap-3.5 bg-card/85 px-6 py-10 sm:py-12 text-center backdrop-blur-[2px]">
+      <p className="text-base sm:text-lg font-semibold tracking-tight text-foreground">
         {locked} more issues — unlock the full report
       </p>
-      <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
+      <p className="max-w-md text-xs sm:text-sm leading-relaxed text-muted-foreground">
         Every issue with the exact fix, a one-page PDF, and a link you can send to whoever owns the
         code. One payment, no account.
       </p>
-      <div className="flex rounded-lg border border-border bg-card p-1 font-mono text-xs">
+
+      <div className="flex rounded-lg border border-border bg-card p-1 font-mono text-xs shadow-sm">
         {(["INR", "USD"] as Currency[]).map((c) => (
           <button
             key={c}
+            type="button"
             onClick={() => setCurrency(c)}
             className={`rounded px-3 py-1 transition ${
-              currency === c ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+              currency === c ? "bg-primary text-primary-foreground font-semibold" : "text-muted-foreground hover:text-foreground"
             }`}
           >
             {PRICES[c].label}
           </button>
         ))}
       </div>
-      <button
-        onClick={pay}
-        disabled={busy}
-        className="h-11 rounded-lg bg-primary px-6 text-sm font-semibold text-primary-foreground shadow-card transition hover:opacity-90 disabled:opacity-60"
-      >
-        {busy ? "Opening checkout…" : `Unlock full report — ${PRICES[currency].label}`}
-      </button>
+
+      <form onSubmit={pay} className="w-full max-w-sm space-y-2.5 pt-1">
+        <div className="text-left">
+          <label className="block font-mono text-[11px] text-muted-foreground mb-1 text-center">
+            Email address (required for report link & receipt)
+          </label>
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (error) setError(null);
+            }}
+            placeholder="you@yourdomain.com"
+            required
+            aria-label="Email address for report receipt"
+            className="h-11 w-full rounded-lg border border-input bg-background/90 px-4 font-mono text-sm text-foreground text-center shadow-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-ring/25"
+          />
+        </div>
+
+        <button
+          type="submit"
+          disabled={busy}
+          className="h-11 w-full rounded-lg bg-primary px-6 text-sm font-semibold text-primary-foreground shadow-card transition hover:opacity-90 disabled:opacity-60"
+        >
+          {busy ? "Opening checkout…" : `Unlock full report — ${PRICES[currency].label}`}
+        </button>
+      </form>
+
       {error ? <p className="font-mono text-xs text-destructive">{error}</p> : null}
     </div>
   );
 }
 
 export const Route = createFileRoute("/report/$id")({
-  loader: async ({ params }) => {
+  validateSearch: (search: Record<string, unknown>) => ({
+    alreadyUnlocked:
+      search.alreadyUnlocked === "true" || search.alreadyUnlocked === true
+        ? ("true" as const)
+        : undefined,
+  }),
+  loaderDeps: ({ search: { alreadyUnlocked } }) => ({ alreadyUnlocked }),
+  loader: async ({ params, deps }) => {
     try {
-      return { scan: await getScan({ data: { id: params.id } }) };
+      return {
+        scan: await getScan({ data: { id: params.id } }),
+        alreadyUnlocked: deps.alreadyUnlocked === "true",
+      };
     } catch {
-      return { scan: null };
+      return { scan: null, alreadyUnlocked: false };
     }
   },
   head: ({ params, loaderData }) => {
     const scan = loaderData?.scan;
+    const isImproved = scan?.previousScan && scan.score > scan.previousScan.score;
     const title = scan
-      ? `${scan.score}/100 pre-launch score — ShipCheck`
+      ? isImproved
+        ? `${scan.previousScan.score} → ${scan.score}/100 pre-launch score — ShipCheck`
+        : `${scan.score}/100 pre-launch score — ShipCheck`
       : "Your ShipCheck report";
     const description = scan
-      ? `${scan.url} scored ${scan.score}/100 on ShipCheck's ten pre-launch checks. See what's broken before launch day.`
+      ? isImproved
+        ? `${scan.url} improved from ${scan.previousScan.score} to ${scan.score}/100 after fixing pre-launch issues on ShipCheck.`
+        : `${scan.url} scored ${scan.score}/100 on ShipCheck's ten pre-launch checks. See what's broken before launch day.`
       : "Your pre-launch score and the issues found on your site.";
-    const image = scan?.ogImage?.startsWith("http") ? scan.ogImage : null;
+    const image = scan?.ogImage?.startsWith("http")
+      ? isImproved
+        ? `${scan.ogImage}?type=progress&prev=${scan.previousScan.score}`
+        : scan.ogImage
+      : null;
 
     return {
       meta: [
@@ -299,10 +367,31 @@ function EmailCapture({ scanId }: { scanId: string }) {
 }
 
 function Report() {
-  const { scan } = Route.useLoaderData();
+  const { scan, alreadyUnlocked } = Route.useLoaderData();
+  const router = useRouter();
+  const rescan = useServerFn(rescanUrl);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [rescanning, setRescanning] = useState(false);
+  const [rescanError, setRescanError] = useState<string | null>(null);
+  const [unlockedEmail, setUnlockedEmail] = useState<string | null>(null);
 
   if (!scan) return <Missing />;
+
+  async function handleRescan() {
+    if (rescanning || !scan) return;
+    setRescanning(true);
+    setRescanError(null);
+    try {
+      const res = await rescan({ data: { scanId: scan.id } });
+      if (res?.id) {
+        await router.navigate({ to: "/report/$id", params: { id: res.id } });
+      }
+    } catch (err) {
+      setRescanError(err instanceof Error ? err.message : "Re-scan failed. Please try again.");
+    } finally {
+      setRescanning(false);
+    }
+  }
 
   const ranked = [...scan.checks].sort((a, b) => {
     const order = { critical: 0, warning: 1, pass: 2 } as const;
@@ -334,6 +423,8 @@ function Report() {
     (descCheck?.detail && !descCheck.detail.startsWith("No meta") ? descCheck.detail : undefined);
   const previewImage = ogCheck?.preview?.image;
 
+  const displayEmail = unlockedEmail || scan.email;
+
   return (
     <main className="flex min-h-screen flex-col justify-between bg-background text-foreground">
       <div>
@@ -342,6 +433,18 @@ function Report() {
             ship<span className="text-primary">check</span>
           </Link>
           <div className="flex items-center gap-2">
+            {scan.paid && (
+              <button
+                type="button"
+                onClick={handleRescan}
+                disabled={rescanning}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 font-mono text-xs font-semibold text-primary transition hover:bg-primary hover:text-primary-foreground disabled:opacity-60"
+                title="Re-run all 10 checks against this URL"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${rescanning ? "animate-spin" : ""}`} />
+                <span>{rescanning ? "rescanning…" : "rescan URL"}</span>
+              </button>
+            )}
             <ShareOnX score={scan.score} host={host} />
             <CopyLink />
             <Link to="/" className="ml-1 font-mono text-xs text-muted-foreground hover:text-foreground">
@@ -351,6 +454,101 @@ function Report() {
         </header>
 
         <section className="mx-auto max-w-3xl px-6 pb-24">
+          {/* Active rescanning banner */}
+          {rescanning && (
+            <div className="animate-rise mb-6 rounded-2xl border border-primary/30 bg-primary/5 p-5 text-center shadow-card">
+              <RefreshCw className="mx-auto h-6 w-6 animate-spin text-primary" />
+              <p className="mt-2 text-sm font-semibold tracking-tight">Re-scanning {host}…</p>
+              <p className="mt-1 font-mono text-xs text-muted-foreground">
+                Re-running all 10 pre-launch checks to verify your fixes.
+              </p>
+            </div>
+          )}
+
+          {/* Rescan error banner */}
+          {rescanError && (
+            <div className="animate-rise mb-6 flex items-center justify-between rounded-xl border border-destructive/30 bg-destructive/10 p-4 font-mono text-xs text-destructive">
+              <span>{rescanError}</span>
+              <button
+                type="button"
+                onClick={() => setRescanError(null)}
+                className="ml-2 font-semibold underline hover:opacity-80"
+              >
+                dismiss
+              </button>
+            </div>
+          )}
+
+          {/* Requirement 3: Email reinforcement message on paid report */}
+          {scan.paid && displayEmail && (
+            <div className="animate-rise mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-pass/30 bg-pass/10 p-4 font-mono text-xs">
+              <div className="flex items-center gap-2.5">
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-pass" />
+                <span>
+                  We've emailed your report link to <strong>{displayEmail}</strong> — bookmark it or save the link below
+                </span>
+              </div>
+              <div className="shrink-0">
+                <CopyLink />
+              </div>
+            </div>
+          )}
+
+          {/* Requirement 4: Already-unlocked banner when redirected or looking at paid URL */}
+          {alreadyUnlocked && (
+            <div className="animate-rise mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/10 p-4 font-mono text-xs">
+              <div className="flex items-center gap-2.5">
+                <Sparkles className="h-4 w-4 shrink-0 text-primary" />
+                <span>
+                  You've already unlocked a report for this URL — viewing your active report.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleRescan}
+                disabled={rescanning}
+                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-60"
+              >
+                <RefreshCw className={`h-3 w-3 ${rescanning ? "animate-spin" : ""}`} />
+                <span>Re-scan now</span>
+              </button>
+            </div>
+          )}
+
+          {/* Requirement 4: Notice if viewing unpaid report when an unlocked version exists */}
+          {!scan.paid && scan.existingPaidScanId && (
+            <div className="animate-rise mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/10 p-4 font-mono text-xs">
+              <div className="flex items-center gap-2.5">
+                <Sparkles className="h-4 w-4 shrink-0 text-primary" />
+                <span>You've already unlocked a report for this URL</span>
+              </div>
+              <Link
+                to="/report/$id"
+                params={{ id: scan.existingPaidScanId }}
+                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition hover:opacity-90"
+              >
+                View unlocked report &rarr;
+              </Link>
+            </div>
+          )}
+
+          {/* Score comparison card if this scan is linked to a previous scan */}
+          {scan.previousScan && (
+            <ScoreComparisonCard
+              currentScore={scan.score}
+              currentChecks={scan.checks}
+              previousScan={scan.previousScan}
+              scanId={scan.id}
+              url={scan.url}
+              host={host}
+            />
+          )}
+
+          {/* Confetti celebration if score improved */}
+          {scan.previousScan && scan.score > scan.previousScan.score && (
+            <Confetti />
+          )}
+
           {/* Score card — designed to look right as a screenshot */}
           <div className="animate-rise overflow-hidden rounded-2xl border border-border bg-card shadow-card">
             <div className="flex items-center justify-between border-b border-border px-8 py-4">
@@ -411,32 +609,43 @@ function Report() {
                     All 10 checks with failure details and exact fix instructions
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (downloadingPdf) return;
-                    setDownloadingPdf(true);
-                    try {
-                      const bytes = await generateReportPdf({
-                        url: scan.url,
-                        score: scan.score,
-                        scannedAt: scan.scannedAt,
-                        checks: scan.checks,
-                      });
-                      downloadPdfBlob(bytes, `shipcheck-${host || scan.id.slice(0, 8)}.pdf`);
-                    } catch (err) {
-                      console.error("PDF generation failed", err);
-                      alert("PDF generation failed. Please try again.");
-                    } finally {
-                      setDownloadingPdf(false);
-                    }
-                  }}
-                  disabled={downloadingPdf}
-                  className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-5 text-sm font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-60"
-                >
-                  <Download className="h-4 w-4" />
-                  <span>{downloadingPdf ? "Creating PDF…" : "Download PDF"}</span>
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRescan}
+                    disabled={rescanning}
+                    className="inline-flex h-10 items-center gap-2 rounded-lg border border-border bg-card px-4 text-sm font-semibold text-foreground transition hover:border-primary hover:text-primary disabled:opacity-60"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${rescanning ? "animate-spin" : ""}`} />
+                    <span>{rescanning ? "Re-scanning…" : "Rescan this URL"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (downloadingPdf) return;
+                      setDownloadingPdf(true);
+                      try {
+                        const bytes = await generateReportPdf({
+                          url: scan.url,
+                          score: scan.score,
+                          scannedAt: scan.scannedAt,
+                          checks: scan.checks,
+                        });
+                        downloadPdfBlob(bytes, `shipcheck-${host || scan.id.slice(0, 8)}.pdf`);
+                      } catch (err) {
+                        console.error("PDF generation failed", err);
+                        alert("PDF generation failed. Please try again.");
+                      } finally {
+                        setDownloadingPdf(false);
+                      }
+                    }}
+                    disabled={downloadingPdf}
+                    className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-5 text-sm font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-60"
+                  >
+                    <Download className="h-4 w-4" />
+                    <span>{downloadingPdf ? "Creating PDF…" : "Download PDF"}</span>
+                  </button>
+                </div>
               </div>
               <ul className="mt-5 space-y-3">
                 {ranked.map((c) => (
@@ -532,19 +741,26 @@ function Report() {
               )}
 
               <div className="relative mt-10 overflow-hidden rounded-2xl border border-border bg-card">
-                <div className="space-y-3 p-6 blur-[5px]" aria-hidden="true">
-                  {ranked
-                    .slice(top.length)
-                    .filter((c) => c.id !== "og")
-                    .map((c) => (
-                      <div key={c.id} className="flex items-center gap-3 text-sm">
-                        <span className={`h-2 w-2 rounded-full ${dot[c.status]}`} />
-                        <span className="font-medium">{c.name}</span>
-                        <span className="text-muted-foreground">— {c.detail}…</span>
-                      </div>
-                    ))}
+                <div
+                  className="absolute inset-0 space-y-3 p-6 blur-[5px] select-none pointer-events-none opacity-30 overflow-hidden"
+                  aria-hidden="true"
+                >
+                  {[
+                    ...ranked.slice(top.length).filter((c) => c.id !== "og"),
+                    ...ranked.slice(top.length).filter((c) => c.id !== "og"),
+                  ].map((c, i) => (
+                    <div key={`${c.id}-${i}`} className="flex items-center gap-3 text-sm">
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${dot[c.status]}`} />
+                      <span className="font-medium">{c.name}</span>
+                      <span className="truncate text-muted-foreground">— {c.detail}…</span>
+                    </div>
+                  ))}
                 </div>
-                <Unlock scanId={scan.id} locked={locked} />
+                <Unlock
+                  scanId={scan.id}
+                  locked={locked}
+                  onUnlocked={(em) => setUnlockedEmail(em)}
+                />
               </div>
 
               <EmailCapture scanId={scan.id} />

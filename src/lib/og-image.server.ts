@@ -53,6 +53,8 @@ const FONT: Record<string, number[]> = {
   "!": [0x04, 0x04, 0x04, 0x04, 0x04, 0, 0x04],
   "%": [0x11, 0x12, 0x02, 0x04, 0x08, 0x09, 0x11],
   "+": [0, 0x04, 0x04, 0x1f, 0x04, 0x04, 0],
+  ">": [0x10, 0x08, 0x04, 0x02, 0x04, 0x08, 0x10],
+  "<": [0x01, 0x02, 0x04, 0x08, 0x04, 0x02, 0x01],
   "(": [0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02],
   ")": [0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08],
 };
@@ -221,6 +223,70 @@ export async function renderScoreCard(input: OgInput): Promise<Uint8Array> {
 
   // Top-right CTA: keeps clear of the tally line at the bottom.
   const cta = "scan yours free";
+  bmp.text(1128 - textWidth(cta, 4), 104, cta, 4, BRAND);
+
+  return encodePng(bmp);
+}
+
+export type ProgressOgInput = {
+  url: string;
+  prevScore: number;
+  newScore: number;
+};
+
+export async function renderProgressCard(input: ProgressOgInput): Promise<Uint8Array> {
+  const delta = Math.round(input.newScore) - Math.round(input.prevScore);
+  const accent = delta > 0 ? PASS : delta === 0 ? WARN : FAIL;
+
+  let host = input.url;
+  try {
+    host = new URL(input.url).host.replace(/^www\./, "");
+  } catch {
+    /* keep raw */
+  }
+  if (host.length > 34) host = `${host.slice(0, 33)}.`;
+
+  const bmp = new Bitmap(1200, 630, PAPER);
+
+  // Frame + accent edge
+  bmp.rect(0, 0, 1200, 12, accent);
+  bmp.rect(48, 48, 1104, 1, RULE);
+  bmp.rect(48, 581, 1104, 1, RULE);
+
+  bmp.text(72, 88, "shipcheck", 6, BRAND);
+  bmp.text(72, 140, "score progress", 3, MUTED);
+
+  const prevStr = String(Math.max(0, Math.min(100, Math.round(input.prevScore))));
+  const newStr = String(Math.max(0, Math.min(100, Math.round(input.newScore))));
+
+  // Side-by-side progression: [prevStr] -> [newStr]
+  bmp.rect(72, 214, 10, 190, accent);
+
+  const prevWidth = textWidth(prevStr, 22);
+  bmp.text(108, 224, prevStr, 22, MUTED);
+
+  // Arrow: "->"
+  const arrowX = 108 + prevWidth + 28;
+  bmp.text(arrowX, 238, "->", 16, BRAND);
+  const arrowWidth = textWidth("->", 16);
+
+  const newX = arrowX + arrowWidth + 28;
+  bmp.text(newX, 224, newStr, 22, accent);
+  bmp.text(newX + textWidth(newStr, 22) + 20, 318, "/100", 7, MUTED);
+
+  // Progress summary tag
+  const deltaStr = delta > 0 ? `+${delta} points improved` : delta === 0 ? "no score change" : `${delta} points`;
+  bmp.text(108, 362, deltaStr, 6, accent);
+
+  bmp.text(72, 464, host, 6, INK);
+
+  const statusLine =
+    delta > 0
+      ? "issues fixed and re-verified on shipcheck"
+      : "re-scanned on shipcheck";
+  bmp.text(72, 516, statusLine, 4, MUTED);
+
+  const cta = "shipcheck.dev";
   bmp.text(1128 - textWidth(cta, 4), 104, cta, 4, BRAND);
 
   return encodePng(bmp);

@@ -43,21 +43,39 @@ export const Route = createFileRoute("/api/public/webhook/razorpay")({
         const scanId = payment?.notes?.scan_id;
         if (!paymentId || (!orderId && !scanId)) return new Response("ignored");
 
-        const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+        const effectiveEmail = payment?.email || payment?.notes?.email;
         let query = supabaseAdmin
           .from("scans")
           .update({
             paid: true,
             razorpay_payment_id: paymentId,
-            ...(payment?.email ? { email: payment.email } : {}),
+            ...(effectiveEmail ? { email: effectiveEmail } : {}),
           });
         query = orderId ? query.eq("razorpay_order_id", orderId) : query.eq("id", scanId!);
-        const { error } = await query;
+        const { data: updatedScan, error } = await query.select("id, url, score, email").maybeSingle();
 
         if (error) {
           console.error("[razorpay webhook] update failed", error.message);
           return new Response("Update failed", { status: 500 });
         }
+
+        if (updatedScan?.email) {
+          let host = updatedScan.url;
+          try {
+            host = new URL(updatedScan.url).host.replace(/^www\./, "");
+          } catch {
+            /* keep raw */
+          }
+          const origin = new URL(request.url).origin;
+          const { sendReportLinkEmail } = await import("@/lib/email.server");
+          await sendReportLinkEmail({
+            to: updatedScan.email,
+            reportUrl: `${origin}/report/${updatedScan.id}`,
+            host,
+            score: updatedScan.score,
+          });
+        }
+
         return new Response("ok");
       },
     },
